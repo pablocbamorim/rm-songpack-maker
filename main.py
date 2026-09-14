@@ -8,7 +8,8 @@ def main():
         import app
     except ImportError as exc:
         if "tkinter" in str(exc).lower():
-            print("This program needs Python's 'tkinter' GUI library.", file=sys.stderr)
+            print("This program needs Python's 'tkinter' GUI library.",
+                  file=sys.stderr)
             sys.exit(1)
         raise
     application = app.App()
