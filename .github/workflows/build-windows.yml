@@ -28,6 +28,7 @@ jobs:
           pyinstaller --clean --noconfirm --onefile --windowed
           --name SoundpackMaker
           --icon assets/SoundpackMaker.ico
+          --add-data "assets/SoundpackMaker.ico;assets"
           --paths .
           main.py
 
