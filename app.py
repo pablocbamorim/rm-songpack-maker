@@ -142,6 +142,7 @@ class LibraryTab(ttk.Frame):
         # ---- left: entry list -------------------------------------------------
         left = ttk.Frame(self)
         left.pack(side="left", fill="y", padx=(8, 4), pady=8)
+        self.left = left
 
         btn_row = ttk.Frame(left)
         btn_row.pack(fill="x")
@@ -316,10 +317,14 @@ class LibraryTab(ttk.Frame):
     def _toggle_editor(self):
         if self.editor_outer.winfo_ismapped():
             self.editor_outer.pack_forget()
+            self.editor_title.pack_forget()  # add: hide the title too
             self.toggle_btn.config(text="▸ Show editor")
+            self.left.pack_configure(fill="both", expand=True)
         else:
+            self.editor_title.pack(side="left")  # add: restore the title
             self.editor_outer.pack(fill="both", expand=True, pady=(6, 0))
             self.toggle_btn.config(text="▾ Hide editor")
+            self.left.pack_configure(fill="y", expand=False)
             if self.selected_entry_id:
                 entry = next(
                     (e for e in self.app.pack.entries if e.id == self.selected_entry_id), None)
@@ -964,18 +969,10 @@ class App(tk.Tk):
             title="Choose (or create) a folder to save this songpack into")
         if not folder:
             return
-        copy_music = False
-        if self.music_source_folder:
-            copy_music = messagebox.askyesno(
-                "Copy music files?",
-                f"Copy referenced audio files from:\n{self.music_source_folder}\ninto:\n{folder}/music/ ?",
-            )
         try:
             path = yaml_io.save_songpack(
-                self.pack_data, folder,
-                copy_music_from=self.music_source_folder if copy_music else None,
-            )
-        except Exception as exc:  # noqa: BLE001
+                self.pack_data, folder, copy_music_from=None)
+        except Exception as exc:
             messagebox.showerror("Save failed", str(exc))
             return
         self.current_save_folder = folder
