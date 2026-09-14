@@ -128,6 +128,11 @@ class InfoTab(ttk.Frame):
 # Tab 2: Music & Conditions
 # ---------------------------------------------------------------------------
 class LibraryTab(ttk.Frame):
+    # Prefix shown next to entries that have no trigger conditions set yet
+    # (i.e. they'd "always match" -- usually a sign the user forgot to
+    # configure them, so we flag it visually in the list).
+    WARNING_PREFIX = "\u26a0 "  # ⚠
+
     def __init__(self, parent, app: "App"):
         super().__init__(parent)
         self.app = app
@@ -146,6 +151,19 @@ class LibraryTab(ttk.Frame):
                    command=self.app.action_load_music_folder).pack(side="left", padx=2)
         ttk.Button(btn_row, text="Remove", command=self._remove_selected).pack(
             side="left", padx=2)
+
+        # -- search box: filter the entry list by song name --
+        search_row = ttk.Frame(left)
+        search_row.pack(fill="x", pady=(6, 0))
+        ttk.Label(search_row, text="Search:").pack(side="left")
+        self.search_var = tk.StringVar()
+        self.search_entry = ttk.Entry(
+            search_row, textvariable=self.search_var)
+        self.search_entry.pack(side="left", fill="x", expand=True, padx=(4, 0))
+        self.search_var.trace_add(
+            "write", lambda *_: self.refresh_tree(keep_selection=True))
+        ttk.Button(search_row, text="✕", width=2,
+                   command=lambda: self.search_var.set("")).pack(side="left", padx=(2, 0))
 
         columns = ("song", "summary", "score")
         self.tree = ttk.Treeview(
@@ -225,10 +243,16 @@ class LibraryTab(ttk.Frame):
     def refresh_tree(self, keep_selection=False):
         prev = self.selected_entry_id if keep_selection else None
         self.tree.delete(*self.tree.get_children())
+        query = self.search_var.get().strip().lower()
         for entry in self.app.pack.entries:
+            if query and not any(query in s.lower() for s in entry.songs):
+                continue
+            name = entry.display_name()
+            if not entry.has_any_condition():
+                name = self.WARNING_PREFIX + name
             self.tree.insert(
                 "", "end", iid=entry.id,
-                values=(entry.display_name(), condition_logic.summarize_entry(
+                values=(name, condition_logic.summarize_entry(
                     entry), priority.score_entry(entry)),
             )
         if prev and self.tree.exists(prev):
@@ -302,6 +326,14 @@ class LibraryTab(ttk.Frame):
                 if entry:
                     self._build_editor_for(entry)
 
+    # -- helpers -------------------------------------------------
+    def _available_biome_values(self, entry: Entry, is_tag: bool):
+        """Biome/biome-tag options not already added to this entry, so the
+        picker doesn't keep offering values that are already selected."""
+        pool = C.COMMON_BIOME_TAGS if is_tag else C.COMMON_BIOMES
+        used = {b.value for b in entry.biomes if b.is_tag == is_tag}
+        return [v for v in pool if v not in used]
+
     # -- editor construction -------------------------------------------------
     def _build_editor_for(self, entry: Entry):
         for w in self.editor_frame.winfo_children():
@@ -333,15 +365,22 @@ class LibraryTab(ttk.Frame):
         row1.pack(fill="x", padx=4, pady=2)
         ttk.Label(row1, text="Biome:").pack(side="left")
         self.biome_search_var = tk.StringVar()
-        self.biome_combobox = ttk.Combobox(
-            row1, textvariable=self.biome_search_var, values=C.COMMON_BIOMES, width=24)
-        self.biome_combobox.pack(side="left", padx=4)
         self.biome_is_tag_var = tk.BooleanVar(value=False)
+        self.biome_combobox = ttk.Combobox(
+            row1, textvariable=self.biome_search_var,
+            values=self._available_biome_values(entry, False), width=24,
+        )
+        self.biome_combobox.pack(side="left", padx=4)
+
+        def _on_biome_tag_toggle():
+            self.biome_combobox.configure(
+                values=self._available_biome_values(
+                    entry, self.biome_is_tag_var.get())
+            )
+
         ttk.Checkbutton(
             row1, text="Use as BIOMETAG (broader match)", variable=self.biome_is_tag_var,
-            command=lambda: self.biome_combobox.configure(
-                values=C.COMMON_BIOME_TAGS if self.biome_is_tag_var.get() else C.COMMON_BIOMES
-            ),
+            command=_on_biome_tag_toggle,
         ).pack(side="left", padx=8)
         ttk.Button(row1, text="Add", command=lambda: self._add_biome(
             entry)).pack(side="left", padx=4)
@@ -533,6 +572,14 @@ class LibraryTab(ttk.Frame):
         )
         self.score_label.pack(anchor="w", padx=4, pady=2)
 
+        if not entry.has_any_condition():
+            ttk.Label(
+                info_frame,
+                text=f"{self.WARNING_PREFIX}This entry has no conditions set, so it always matches -- "
+                "it will play whenever nothing higher in the priority list is valid.",
+                foreground="#b45309",
+            ).pack(anchor="w", padx=4, pady=(0, 6))
+
         fallbacks = priority.find_broader_fallbacks(
             entry, self.app.pack.entries)
         if fallbacks:
@@ -719,10 +766,13 @@ class PriorityTab(ttk.Frame):
         selected = self.tree.selection()
         self.tree.delete(*self.tree.get_children())
         for i, entry in enumerate(self.app.pack.entries, start=1):
+            name = entry.display_name()
+            if not entry.has_any_condition():
+                name = LibraryTab.WARNING_PREFIX + name
             self.tree.insert(
                 "", "end", iid=entry.id,
                 values=(
-                    i, entry.display_name(), priority.score_entry(entry),
+                    i, name, priority.score_entry(entry),
                     condition_logic.summarize_entry(entry),
                     "yes" if entry.allow_fallback else "no",
                 ),

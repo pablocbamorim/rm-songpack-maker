@@ -169,73 +169,8 @@ def _apply_dark_theme(app):
                      highlightcolor=border)
 
 
-def _install_smooth_scrolling(library):
-    """Use short pixel-based wheel steps with light easing instead of Tk's coarse units."""
-    canvas = library.canvas
-    state = {"target": None, "after_id": None}
-
-    def get_scrollable_height():
-        bbox = canvas.bbox("all")
-        if not bbox:
-            return 0
-        return max(0, bbox[3] - bbox[1] - canvas.winfo_height())
-
-    def animate():
-        state["after_id"] = None
-        scrollable = get_scrollable_height()
-        if scrollable <= 0 or state["target"] is None:
-            return
-        current = canvas.yview()[0]
-        target = state["target"]
-        distance = target - current
-        if abs(distance) < 0.001:
-            canvas.yview_moveto(target)
-            state["target"] = None
-            return
-        canvas.yview_moveto(max(0.0, min(1.0, current + distance * 0.35)))
-        state["after_id"] = canvas.after(12, animate)
-
-    def on_wheel(event):
-        scrollable = get_scrollable_height()
-        if scrollable <= 0:
-            return "break"
-        if getattr(event, "num", None) == 4:
-            notches = 1
-        elif getattr(event, "num", None) == 5:
-            notches = -1
-        else:
-            notches = event.delta / 120.0
-        delta_fraction = (-notches * 48.0) / scrollable
-        current = canvas.yview()[0]
-        target = state["target"] if state["target"] is not None else current
-        state["target"] = max(0.0, min(1.0, target + delta_fraction))
-        if state["after_id"] is None:
-            state["after_id"] = canvas.after(0, animate)
-        return "break"
-
-    def bind():
-        canvas.bind_all("<MouseWheel>", on_wheel)
-        canvas.bind_all("<Button-4>", on_wheel)
-        canvas.bind_all("<Button-5>", on_wheel)
-
-    def unbind():
-        canvas.unbind_all("<MouseWheel>")
-        canvas.unbind_all("<Button-4>")
-        canvas.unbind_all("<Button-5>")
-        if state["after_id"] is not None:
-            try:
-                canvas.after_cancel(state["after_id"])
-            except Exception:
-                pass
-            state["after_id"] = None
-
-    canvas.bind("<Enter>", lambda _e: bind())
-    canvas.bind("<Leave>", lambda _e: unbind())
-
-
 def install(app):
     _apply_dark_theme(app)
-    _install_smooth_scrolling(app.library_tab)
     settings = _load_settings()
 
     original_load = app.action_load_music_folder
