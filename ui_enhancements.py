@@ -14,7 +14,8 @@ _SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 def standardize_name(name: str) -> str:
     stem, ext = os.path.splitext(name)
-    text = unicodedata.normalize("NFKD", stem).encode("ascii", "ignore").decode("ascii")
+    text = unicodedata.normalize("NFKD", stem).encode(
+        "ascii", "ignore").decode("ascii")
     text = _SAFE_RE.sub("_", text).strip("._-")
     return text or "track"
 
@@ -42,7 +43,8 @@ def _translate_music_folder(folder, stems):
     mapping = {}
     used = set(os.listdir(folder))
     for old_stem, new_stem in changed:
-        src = next((f for f in os.listdir(folder) if os.path.splitext(f)[0] == old_stem), None)
+        src = next((f for f in os.listdir(folder)
+                   if os.path.splitext(f)[0] == old_stem), None)
         if not src:
             continue
         ext = os.path.splitext(src)[1]
@@ -75,14 +77,15 @@ def _apply_dark_theme(app):
     style = ttk.Style(app)
     try:
         style.theme_use("clam")
-    except tk.TclError:
+    except ttk.TclError:
         pass
 
     style.configure(".", background=bg, foreground=fg, bordercolor=border,
                     lightcolor=border, darkcolor=border, troughcolor=field)
     style.configure("TFrame", background=bg)
     style.configure("TLabel", background=bg, foreground=fg)
-    style.configure("TLabelFrame", background=bg, foreground=fg, bordercolor=border)
+    style.configure("TLabelFrame", background=bg,
+                    foreground=fg, bordercolor=border)
     style.configure("TLabelframe.Label", background=bg, foreground=fg)
     style.configure("TButton", background=field, foreground=fg, bordercolor=border,
                     padding=(8, 4), focuscolor=border)
@@ -96,9 +99,11 @@ def _apply_dark_theme(app):
     style.map("TCombobox", fieldbackground=[("readonly", field)],
               foreground=[("readonly", fg)], background=[("readonly", field)])
     style.configure("TCheckbutton", background=bg, foreground=fg)
-    style.map("TCheckbutton", background=[("active", bg)], foreground=[("active", "#ffffff")])
+    style.map("TCheckbutton", background=[
+              ("active", bg)], foreground=[("active", "#ffffff")])
     style.configure("TRadiobutton", background=bg, foreground=fg)
-    style.map("TRadiobutton", background=[("active", bg)], foreground=[("active", "#ffffff")])
+    style.map("TRadiobutton", background=[
+              ("active", bg)], foreground=[("active", "#ffffff")])
     style.configure("TNotebook", background=bg, bordercolor=border)
     style.configure("TNotebook.Tab", background=surface, foreground=muted,
                     padding=(12, 6), bordercolor=border)
@@ -133,8 +138,8 @@ def _apply_dark_theme(app):
         for menu in app.nametowidget(app["menu"]).winfo_children():
             try:
                 menu.configure(background=surface, foreground=fg,
-                                activebackground=accent, activeforeground="#ffffff",
-                                borderwidth=0)
+                               activebackground=accent, activeforeground="#ffffff",
+                               borderwidth=0)
             except Exception:
                 pass
     except Exception:
@@ -142,8 +147,9 @@ def _apply_dark_theme(app):
 
     canvas = app.library_tab.canvas
     canvas.configure(background=bg, highlightbackground=border,
-                      highlightcolor=border)
-    app.library_tab.biome_listbox if hasattr(app.library_tab, "biome_listbox") else None
+                     highlightcolor=border)
+    app.library_tab.biome_listbox if hasattr(
+        app.library_tab, "biome_listbox") else None
 
 
 def _install_smooth_scrolling(library):
@@ -241,7 +247,8 @@ def install(app):
                 added += 1
         app.music_source_folder = folder
         app.refresh_all()
-        app.set_status(f"Found {len(stems)} audio file(s), added {added} new blank entries.")
+        app.set_status(
+            f"Found {len(stems)} audio file(s), added {added} new blank entries.")
 
     def save_config():
         original_save()
@@ -250,14 +257,16 @@ def install(app):
             return
         yaml_path = os.path.join(path, "ReactiveMusic.yaml")
         if not os.path.isfile(yaml_path):
-            messagebox.showerror("Save verification failed", f"ReactiveMusic.yaml was not found at:\n{yaml_path}")
+            messagebox.showerror(
+                "Save verification failed", f"ReactiveMusic.yaml was not found at:\n{yaml_path}")
             return
         try:
             reloaded = yaml_io.load_songpack(path)
             expected = [s for e in app.pack.entries for s in e.songs]
             actual = [s for e in reloaded.entries for s in e.songs]
             if actual != expected:
-                raise ValueError("Saved YAML does not contain the same song entries as the editor.")
+                raise ValueError(
+                    "Saved YAML does not contain the same song entries as the editor.")
         except Exception as exc:
             messagebox.showerror("Save verification failed", str(exc))
             return
@@ -292,7 +301,8 @@ def install(app):
     def play_pause():
         path = resolve_selected_path()
         if pygame is None:
-            messagebox.showerror("Preview unavailable", "Install the preview dependency with: pip install pygame")
+            messagebox.showerror(
+                "Preview unavailable", "Install the preview dependency with: pip install pygame")
             return
         try:
             if not pygame.mixer.get_init():
@@ -308,7 +318,8 @@ def install(app):
                 preview_button.config(text="Pause song")
                 return
             if not path:
-                messagebox.showinfo("Preview", "Select a song from the list and make sure its music folder is loaded.")
+                messagebox.showinfo(
+                    "Preview", "Select a song from the list and make sure its music folder is loaded.")
                 return
             pygame.mixer.music.load(path)
             pygame.mixer.music.play()
@@ -328,8 +339,10 @@ def install(app):
 
     controls = ttk.Frame(library)
     controls.pack(side="bottom", fill="x", padx=(8, 4), pady=(4, 8))
-    preview_button = ttk.Button(controls, text="Preview song", command=play_pause)
+    preview_button = ttk.Button(
+        controls, text="Preview song", command=play_pause)
     preview_button.pack(side="left", padx=2)
-    ttk.Button(controls, text="Stop", command=stop_preview).pack(side="left", padx=2)
+    ttk.Button(controls, text="Stop", command=stop_preview).pack(
+        side="left", padx=2)
 
     app.bind("<Destroy>", lambda _e: stop_preview(), add="+")
