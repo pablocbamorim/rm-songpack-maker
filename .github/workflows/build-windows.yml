@@ -28,6 +28,14 @@ jobs:
           pyinstaller --onefile --windowed
           --name SoundpackMaker
           --icon assets/SoundpackMaker.ico
+          --hidden-import app
+          --hidden-import ui_enhancements
+          --hidden-import constants
+          --hidden-import block_data
+          --hidden-import yaml_io
+          --hidden-import priority
+          --hidden-import condition_logic
+          --hidden-import models
           main.py
 
       - name: Upload executable
