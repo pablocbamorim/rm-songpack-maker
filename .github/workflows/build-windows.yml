@@ -1,0 +1,37 @@
+name: Build Windows executable
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt pyinstaller
+
+      - name: Build SoundpackMaker.exe
+        run: >-
+          pyinstaller --onefile --windowed
+          --name SoundpackMaker
+          --icon assets/SoundpackMaker.ico
+          main.py
+
+      - name: Upload executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: SoundpackMaker-Windows
+          path: dist/SoundpackMaker.exe
