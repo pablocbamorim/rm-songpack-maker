@@ -25,7 +25,7 @@ def _set_window_icon(application):
     if os.path.exists(icon_path):
         try:
             application.iconbitmap(default=icon_path)
-        except tk.TclError:
+        except Exception:
             pass
 
 
