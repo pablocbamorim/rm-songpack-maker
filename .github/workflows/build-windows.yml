@@ -25,18 +25,23 @@ jobs:
 
       - name: Build SoundpackMaker.exe
         run: >-
-          pyinstaller --onefile --windowed
+          pyinstaller --clean --noconfirm --onefile --windowed
           --name SoundpackMaker
           --icon assets/SoundpackMaker.ico
-          --hidden-import app
-          --hidden-import ui_enhancements
-          --hidden-import constants
-          --hidden-import block_data
-          --hidden-import yaml_io
-          --hidden-import priority
-          --hidden-import condition_logic
-          --hidden-import models
+          --paths .
           main.py
+
+      - name: Verify executable contents
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "dist/SoundpackMaker.exe")) {
+            throw "PyInstaller did not produce dist/SoundpackMaker.exe"
+          }
+          $size = (Get-Item "dist/SoundpackMaker.exe").Length
+          if ($size -lt 1000000) {
+            throw "Executable is unexpectedly small: $size bytes"
+          }
+          Write-Host "Built SoundpackMaker.exe ($size bytes)"
 
       - name: Upload executable
         uses: actions/upload-artifact@v4
