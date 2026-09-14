@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Entry point for the ReactiveMusic Songpack Editor."""
+import os
 import sys
 
 try:
@@ -13,8 +14,24 @@ except ImportError as exc:
     raise
 
 
+def _set_window_icon(application):
+    """Use the project icon for the Tk window in both source and PyInstaller builds."""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        base_dir = sys._MEIPASS
+    else:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+
+    icon_path = os.path.join(base_dir, "assets", "SoundpackMaker.ico")
+    if os.path.exists(icon_path):
+        try:
+            application.iconbitmap(default=icon_path)
+        except tk.TclError:
+            pass
+
+
 def main():
     application = app.App()
+    _set_window_icon(application)
     ui_enhancements.install(application)
     application.mainloop()
 
