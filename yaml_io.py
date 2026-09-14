@@ -1,23 +1,3 @@
-"""
-yaml_io.py
------------
-Reading and writing ReactiveMusic.yaml files, and scanning a folder of
-mp3s.
-
-A note on the file format: MAKING_SONGPACKS.md shows the *global* keys
-(name, version, author, ...) and shows *entry* dicts (events/songs/...)
-but never explicitly shows the key that the list of entries lives under
-in the final file (e.g. it might be `entries:`, `songs:`, or something
-else depending on the exact version of the mod). Rather than guess and
-risk generating a file the mod can't read, `load_songpack` auto-detects
-whichever top-level key holds a list of entry-shaped dicts and remembers
-it on the Songpack (`entries_root_key`), so re-saving a file you loaded
-reproduces its original structure. For a brand-new songpack we default
-to `entries:` -- if your installed mod version expects a different key,
-change DEFAULT_ENTRIES_ROOT_KEY below (one line) or rename it in the
-"Songpack Info" tab before saving.
-"""
-
 from __future__ import annotations
 
 import os
@@ -35,10 +15,7 @@ AUDIO_EXTENSIONS = (".mp3", ".ogg", ".wav")
 
 
 class _FlowList(list):
-    """A list that should be dumped in YAML flow style, e.g. [ "A", "B" ],
-    matching the `events: [ "DAY", "BIOME=MOUNTAIN" ]` style shown in
-    MAKING_SONGPACKS.md. Regular lists (like `songs:`) stay block style.
-    """
+    pass
 
 
 def _flow_list_representer(dumper: yaml.Dumper, data: _FlowList):
@@ -60,10 +37,6 @@ def _find_entries_root_key(data: dict) -> Optional[str]:
 
 
 def load_songpack(path: str) -> Songpack:
-    """Load a ReactiveMusic.yaml (or a folder containing one) into a
-    Songpack. Unrecognised global keys are ignored (but entry-level
-    conditions we don't understand are preserved -- see condition_logic).
-    """
     if os.path.isdir(path):
         candidate = os.path.join(path, "ReactiveMusic.yaml")
         if not os.path.isfile(candidate):
@@ -76,7 +49,6 @@ def load_songpack(path: str) -> Songpack:
     pack = Songpack()
 
     if isinstance(data, list):
-        # File is *only* a list of entries, no global config wrapper.
         raw_entries = data
         pack.entries_root_key = DEFAULT_ENTRIES_ROOT_KEY
     elif isinstance(data, dict):
@@ -157,10 +129,6 @@ def songpack_to_dict(pack: Songpack) -> dict:
 
 
 def save_songpack(pack: Songpack, folder: str, copy_music_from: Optional[str] = None) -> str:
-    """Write ReactiveMusic.yaml into `folder` (creating it if needed).
-    If `copy_music_from` is given, any referenced song file found there
-    is copied into `folder/music/`. Returns the path to the written yaml.
-    """
     os.makedirs(folder, exist_ok=True)
     yaml_path = os.path.join(folder, "ReactiveMusic.yaml")
 
@@ -200,9 +168,6 @@ def _copy_referenced_music(pack: Songpack, source_folder: str, dest_folder: str)
 
 
 def scan_music_folder(folder: str):
-    """Return a sorted list of song "stems" (filename without extension)
-    for every audio file directly inside `folder`.
-    """
     if not os.path.isdir(folder):
         return []
     stems = []
