@@ -60,7 +60,168 @@ def _translate_music_folder(folder, stems):
     return [mapping.get(s, s) for s in stems]
 
 
+def _apply_dark_theme(app):
+    """Apply a consistent dark palette to the existing Tk/ttk widgets."""
+    bg = "#1e1e1e"
+    surface = "#252526"
+    field = "#2d2d30"
+    border = "#3f3f46"
+    fg = "#e6e6e6"
+    muted = "#a0a0a5"
+    accent = "#3b82f6"
+    accent_hover = "#4b8ff7"
+    selected = "#264f78"
+
+    style = ttk.Style(app)
+    try:
+        style.theme_use("clam")
+    except tk.TclError:
+        pass
+
+    style.configure(".", background=bg, foreground=fg, bordercolor=border,
+                    lightcolor=border, darkcolor=border, troughcolor=field)
+    style.configure("TFrame", background=bg)
+    style.configure("TLabel", background=bg, foreground=fg)
+    style.configure("TLabelFrame", background=bg, foreground=fg, bordercolor=border)
+    style.configure("TLabelframe.Label", background=bg, foreground=fg)
+    style.configure("TButton", background=field, foreground=fg, bordercolor=border,
+                    padding=(8, 4), focuscolor=border)
+    style.map("TButton", background=[("active", accent_hover), ("pressed", accent)],
+              foreground=[("active", "#ffffff"), ("pressed", "#ffffff")])
+    style.configure("TEntry", fieldbackground=field, foreground=fg,
+                    insertcolor=fg, bordercolor=border, lightcolor=border,
+                    darkcolor=border)
+    style.configure("TCombobox", fieldbackground=field, foreground=fg,
+                    background=field, arrowcolor=fg, bordercolor=border)
+    style.map("TCombobox", fieldbackground=[("readonly", field)],
+              foreground=[("readonly", fg)], background=[("readonly", field)])
+    style.configure("TCheckbutton", background=bg, foreground=fg)
+    style.map("TCheckbutton", background=[("active", bg)], foreground=[("active", "#ffffff")])
+    style.configure("TRadiobutton", background=bg, foreground=fg)
+    style.map("TRadiobutton", background=[("active", bg)], foreground=[("active", "#ffffff")])
+    style.configure("TNotebook", background=bg, bordercolor=border)
+    style.configure("TNotebook.Tab", background=surface, foreground=muted,
+                    padding=(12, 6), bordercolor=border)
+    style.map("TNotebook.Tab", background=[("selected", field), ("active", surface)],
+              foreground=[("selected", fg), ("active", fg)])
+    style.configure("Treeview", background=field, fieldbackground=field,
+                    foreground=fg, bordercolor=border, rowheight=25)
+    style.map("Treeview", background=[("selected", selected)],
+              foreground=[("selected", "#ffffff")])
+    style.configure("Treeview.Heading", background=surface, foreground=fg,
+                    bordercolor=border, relief="flat")
+    style.map("Treeview.Heading", background=[("active", field)])
+    style.configure("Vertical.TScrollbar", background=field, troughcolor=bg,
+                    bordercolor=bg, arrowcolor=fg)
+    style.configure("Horizontal.TScrollbar", background=field, troughcolor=bg,
+                    bordercolor=bg, arrowcolor=fg)
+
+    # Widgets using the plain Tk API (Canvas/Listbox/Menu) don't inherit ttk styling.
+    app.configure(background=bg)
+    app.option_add("*TCombobox*Listbox.background", field)
+    app.option_add("*TCombobox*Listbox.foreground", fg)
+    app.option_add("*TCombobox*Listbox.selectBackground", selected)
+    app.option_add("*TCombobox*Listbox.selectForeground", "#ffffff")
+
+    try:
+        app.nametowidget(app["menu"]).configure(
+            background=surface, foreground=fg,
+            activebackground=accent, activeforeground="#ffffff",
+            borderwidth=0,
+        )
+        # The menu cascades are separate Tk Menu objects.
+        for menu in app.nametowidget(app["menu"]).winfo_children():
+            try:
+                menu.configure(background=surface, foreground=fg,
+                                activebackground=accent, activeforeground="#ffffff",
+                                borderwidth=0)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    canvas = app.library_tab.canvas
+    canvas.configure(background=bg, highlightbackground=border,
+                      highlightcolor=border)
+    app.library_tab.biome_listbox if hasattr(app.library_tab, "biome_listbox") else None
+
+
+def _install_smooth_scrolling(library):
+    """Use short pixel-based wheel steps with light easing instead of Tk's coarse units."""
+    canvas = library.canvas
+    state = {"target": None, "after_id": None}
+
+    def get_scrollable_height():
+        bbox = canvas.bbox("all")
+        if not bbox:
+            return 0
+        return max(0, bbox[3] - bbox[1] - canvas.winfo_height())
+
+    def animate():
+        state["after_id"] = None
+        scrollable = get_scrollable_height()
+        if scrollable <= 0 or state["target"] is None:
+            return
+
+        current = canvas.yview()[0]
+        target = state["target"]
+        distance = target - current
+        if abs(distance) < 0.001:
+            canvas.yview_moveto(target)
+            state["target"] = None
+            return
+
+        # Ease toward the target so repeated wheel events remain fluid.
+        next_pos = current + distance * 0.35
+        canvas.yview_moveto(max(0.0, min(1.0, next_pos)))
+        state["after_id"] = canvas.after(12, animate)
+
+    def on_wheel(event):
+        scrollable = get_scrollable_height()
+        if scrollable <= 0:
+            return "break"
+
+        if getattr(event, "num", None) == 4:
+            notches = 1
+        elif getattr(event, "num", None) == 5:
+            notches = -1
+        else:
+            notches = event.delta / 120.0
+
+        # About 48 px per wheel notch, independent of widget row height.
+        delta_fraction = (-notches * 48.0) / scrollable
+        current = canvas.yview()[0]
+        target = state["target"] if state["target"] is not None else current
+        state["target"] = max(0.0, min(1.0, target + delta_fraction))
+
+        if state["after_id"] is None:
+            state["after_id"] = canvas.after(0, animate)
+        return "break"
+
+    def bind():
+        canvas.bind_all("<MouseWheel>", on_wheel)
+        canvas.bind_all("<Button-4>", on_wheel)
+        canvas.bind_all("<Button-5>", on_wheel)
+
+    def unbind():
+        canvas.unbind_all("<MouseWheel>")
+        canvas.unbind_all("<Button-4>")
+        canvas.unbind_all("<Button-5>")
+        if state["after_id"] is not None:
+            try:
+                canvas.after_cancel(state["after_id"])
+            except Exception:
+                pass
+            state["after_id"] = None
+
+    canvas.bind("<Enter>", lambda _e: bind())
+    canvas.bind("<Leave>", lambda _e: unbind())
+
+
 def install(app):
+    _apply_dark_theme(app)
+    _install_smooth_scrolling(app.library_tab)
+
     original_load = app.action_load_music_folder
     original_save = app.action_save_config
 
