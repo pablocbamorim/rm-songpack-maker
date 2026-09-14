@@ -10,7 +10,8 @@ from tkinter import filedialog, messagebox, ttk
 import yaml_io
 
 _SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
-_SETTINGS_PATH = os.path.join(os.path.expanduser("~"), ".rm-songpack-maker", "settings.json")
+_SETTINGS_PATH = os.path.join(os.path.expanduser(
+    "~"), ".rm-songpack-maker", "settings.json")
 
 
 def standardize_name(name: str) -> str:
@@ -46,7 +47,8 @@ def _translate_music_folder(folder, stems):
     used = set(os.listdir(folder))
     files = os.listdir(folder)
     for old_stem, new_stem in changed:
-        src = next((f for f in files if os.path.splitext(f)[0] == old_stem), None)
+        src = next(
+            (f for f in files if os.path.splitext(f)[0] == old_stem), None)
         if not src:
             continue
         ext = os.path.splitext(src)[1]
@@ -107,7 +109,8 @@ def _apply_dark_theme(app):
                     lightcolor=border, darkcolor=border, troughcolor=field)
     style.configure("TFrame", background=bg)
     style.configure("TLabel", background=bg, foreground=fg)
-    style.configure("TLabelFrame", background=bg, foreground=fg, bordercolor=border)
+    style.configure("TLabelFrame", background=bg,
+                    foreground=fg, bordercolor=border)
     style.configure("TLabelframe.Label", background=bg, foreground=fg)
     style.configure("TButton", background=field, foreground=fg, bordercolor=border,
                     padding=(8, 4), focuscolor=border)
@@ -120,9 +123,11 @@ def _apply_dark_theme(app):
     style.map("TCombobox", fieldbackground=[("readonly", field)],
               foreground=[("readonly", fg)], background=[("readonly", field)])
     style.configure("TCheckbutton", background=bg, foreground=fg)
-    style.map("TCheckbutton", background=[("active", bg)], foreground=[("active", "#ffffff")])
+    style.map("TCheckbutton", background=[
+              ("active", bg)], foreground=[("active", "#ffffff")])
     style.configure("TRadiobutton", background=bg, foreground=fg)
-    style.map("TRadiobutton", background=[("active", bg)], foreground=[("active", "#ffffff")])
+    style.map("TRadiobutton", background=[
+              ("active", bg)], foreground=[("active", "#ffffff")])
     style.configure("TNotebook", background=bg, bordercolor=border)
     style.configure("TNotebook.Tab", background=surface, foreground=muted,
                     padding=(12, 6), bordercolor=border)
@@ -149,18 +154,19 @@ def _apply_dark_theme(app):
     try:
         menu = app.nametowidget(app["menu"])
         menu.configure(background=surface, foreground=fg,
-                        activebackground=accent, activeforeground="#ffffff", borderwidth=0)
+                       activebackground=accent, activeforeground="#ffffff", borderwidth=0)
         for child in menu.winfo_children():
             try:
                 child.configure(background=surface, foreground=fg,
-                                 activebackground=accent, activeforeground="#ffffff", borderwidth=0)
+                                activebackground=accent, activeforeground="#ffffff", borderwidth=0)
             except Exception:
                 pass
     except Exception:
         pass
 
     canvas = app.library_tab.canvas
-    canvas.configure(background=bg, highlightbackground=border, highlightcolor=border)
+    canvas.configure(background=bg, highlightbackground=border,
+                     highlightcolor=border)
 
 
 def _install_smooth_scrolling(library):
@@ -251,7 +257,8 @@ def install(app):
                 added += 1
         app.music_source_folder = folder
         app.refresh_all()
-        app.set_status(f"Found {len(stems)} audio file(s), added {added} new blank entries.")
+        app.set_status(
+            f"Found {len(stems)} audio file(s), added {added} new blank entries.")
 
     def save_config():
         original_save()
@@ -266,7 +273,8 @@ def install(app):
             expected = [s for e in app.pack.entries for s in e.songs]
             actual = [s for e in reloaded.entries for s in e.songs]
             if actual != expected:
-                raise ValueError("Saved YAML does not contain the same song entries as the editor.")
+                raise ValueError(
+                    "Saved YAML does not contain the same song entries as the editor.")
         except Exception as exc:
             messagebox.showerror("Save verification failed", str(exc))
             return
@@ -299,7 +307,8 @@ def install(app):
     def play_pause():
         path = resolve_selected_path()
         if pygame is None:
-            messagebox.showerror("Preview unavailable", "Install the preview dependency with: pip install pygame")
+            messagebox.showerror(
+                "Preview unavailable", "Install the preview dependency with: pip install pygame")
             return
         try:
             if not pygame.mixer.get_init():
@@ -315,7 +324,8 @@ def install(app):
                 preview_button.config(text="Pause song")
                 return
             if not path:
-                messagebox.showinfo("Preview", "Select a song from the list and make sure its music folder is loaded.")
+                messagebox.showinfo(
+                    "Preview", "Select a song from the list and make sure its music folder is loaded.")
                 return
             pygame.mixer.music.load(path)
             pygame.mixer.music.play()
@@ -336,15 +346,19 @@ def install(app):
     # Put the controls directly under the song list, where they are visible
     # regardless of how the condition editor is sized.
     library = app.library_tab
-    left = next((w for w in library.winfo_children() if isinstance(w, ttk.Frame)), None)
+    left = next((w for w in library.winfo_children()
+                if isinstance(w, ttk.Frame)), None)
     if left is not None:
         controls = ttk.Frame(left)
         controls.pack(fill="x", pady=(6, 0))
-        preview_button = ttk.Button(controls, text="Preview song", command=play_pause)
+        preview_button = ttk.Button(
+            controls, text="Preview song", command=play_pause)
         preview_button.pack(side="left", padx=2)
-        ttk.Button(controls, text="Stop", command=stop_preview).pack(side="left", padx=2)
+        ttk.Button(controls, text="Stop", command=stop_preview).pack(
+            side="left", padx=2)
     else:
-        preview_button = ttk.Button(library, text="Preview song", command=play_pause)
+        preview_button = ttk.Button(
+            library, text="Preview song", command=play_pause)
         preview_button.pack(side="bottom")
 
     def show_settings():
@@ -355,7 +369,8 @@ def install(app):
         win.transient(app)
         win.grab_set()
 
-        var = __import__("tkinter").BooleanVar(value=settings.get("double_click_preview", False))
+        var = __import__("tkinter").BooleanVar(
+            value=settings.get("double_click_preview", False))
         ttk.Label(win, text="Playback").pack(anchor="w", padx=14, pady=(14, 6))
         ttk.Checkbutton(
             win,
@@ -372,8 +387,10 @@ def install(app):
             _save_settings(settings)
             win.destroy()
 
-        ttk.Button(win, text="Cancel", command=win.destroy).pack(side="right", padx=(4, 14), pady=(0, 14))
-        ttk.Button(win, text="Apply", command=apply).pack(side="right", pady=(0, 14))
+        ttk.Button(win, text="Cancel", command=win.destroy).pack(
+            side="right", padx=(4, 14), pady=(0, 14))
+        ttk.Button(win, text="Apply", command=apply).pack(
+            side="right", pady=(0, 14))
 
     # Add Settings to the existing Help/File menu without changing app.py.
     try:
