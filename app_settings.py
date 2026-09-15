@@ -9,14 +9,15 @@ those belong to a songpack and are stored next to it by
 biome_customization.py.
 
 UI appearance is handled by CustomTkinter. This module only owns persisted
-settings and exposes a small compatibility wrapper used by the existing App
-view while the rest of the UI is migrated incrementally.
+settings and provides the compatibility hook used by the existing App while
+the view layer is migrated incrementally.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import tkinter as tk
 
 import customtkinter as ctk
 
@@ -63,5 +64,12 @@ def save(settings: dict) -> None:
 
 
 def apply_theme(_app, dark: bool = True) -> None:
-    """Compatibility wrapper: theme switching is delegated to CustomTkinter."""
+    """Delegate appearance switching to CustomTkinter."""
     ctk.set_appearance_mode("dark" if dark else "light")
+
+
+# App is still declared as App(tk.Tk) in the legacy view during this
+# incremental migration. Make that base resolve to CTk without touching the
+# non-UI modules; the next UI step can replace the declaration directly.
+ctk.set_default_color_theme("blue")
+tk.Tk = ctk.CTk
