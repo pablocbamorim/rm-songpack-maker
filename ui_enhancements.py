@@ -1,17 +1,21 @@
-"""Optional UI enhancements for the ReactiveMusic Songpack Editor."""
+"""Optional UI enhancements for the ReactiveMusic Songpack Editor.
+
+Theming and user preferences moved to app_settings.py + the Settings tab
+(settings_tab.py); this module now only adds behaviour: filename
+normalisation when scanning a music folder, save verification, and the
+audio preview controls.
+"""
 from __future__ import annotations
 
-import json
 import os
 import re
 import unicodedata
 from tkinter import filedialog, messagebox, ttk
 
 import yaml_io
+from models import Entry
 
 _SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
-_SETTINGS_PATH = os.path.join(os.path.expanduser(
-    "~"), ".rm-songpack-maker", "settings.json")
 
 
 def standardize_name(name: str) -> str:
@@ -66,114 +70,12 @@ def _translate_music_folder(folder, stems):
     return [mapping.get(s, s) for s in stems]
 
 
-def _load_settings():
-    defaults = {"double_click_preview": False}
-    try:
-        with open(_SETTINGS_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, dict):
-            defaults.update(data)
-    except (OSError, ValueError):
-        pass
-    return defaults
-
-
-def _save_settings(settings):
-    try:
-        os.makedirs(os.path.dirname(_SETTINGS_PATH), exist_ok=True)
-        with open(_SETTINGS_PATH, "w", encoding="utf-8") as f:
-            json.dump(settings, f, indent=2)
-    except OSError as exc:
-        messagebox.showerror("Settings", f"Could not save settings:\n{exc}")
-
-
-def _apply_dark_theme(app):
-    """Apply a consistent dark palette to the existing Tk/ttk widgets."""
-    bg = "#1e1e1e"
-    surface = "#252526"
-    field = "#2d2d30"
-    border = "#3f3f46"
-    fg = "#e6e6e6"
-    muted = "#a0a0a5"
-    accent = "#3b82f6"
-    accent_hover = "#4b8ff7"
-    selected = "#264f78"
-
-    style = ttk.Style(app)
-    try:
-        style.theme_use("clam")
-    except ttk.TclError:
-        pass
-
-    style.configure(".", background=bg, foreground=fg, bordercolor=border,
-                    lightcolor=border, darkcolor=border, troughcolor=field)
-    style.configure("TFrame", background=bg)
-    style.configure("TLabel", background=bg, foreground=fg)
-    style.configure("TLabelFrame", background=bg,
-                    foreground=fg, bordercolor=border)
-    style.configure("TLabelframe.Label", background=bg, foreground=fg)
-    style.configure("TButton", background=field, foreground=fg, bordercolor=border,
-                    padding=(8, 4), focuscolor=border)
-    style.map("TButton", background=[("active", accent_hover), ("pressed", accent)],
-              foreground=[("active", "#ffffff"), ("pressed", "#ffffff")])
-    style.configure("TEntry", fieldbackground=field, foreground=fg,
-                    insertcolor=fg, bordercolor=border, lightcolor=border, darkcolor=border)
-    style.configure("TCombobox", fieldbackground=field, foreground=fg,
-                    background=field, arrowcolor=fg, bordercolor=border)
-    style.map("TCombobox", fieldbackground=[("readonly", field)],
-              foreground=[("readonly", fg)], background=[("readonly", field)])
-    style.configure("TCheckbutton", background=bg, foreground=fg)
-    style.map("TCheckbutton", background=[
-              ("active", bg)], foreground=[("active", "#ffffff")])
-    style.configure("TRadiobutton", background=bg, foreground=fg)
-    style.map("TRadiobutton", background=[
-              ("active", bg)], foreground=[("active", "#ffffff")])
-    style.configure("TNotebook", background=bg, bordercolor=border)
-    style.configure("TNotebook.Tab", background=surface, foreground=muted,
-                    padding=(12, 6), bordercolor=border)
-    style.map("TNotebook.Tab", background=[("selected", field), ("active", surface)],
-              foreground=[("selected", fg), ("active", fg)])
-    style.configure("Treeview", background=field, fieldbackground=field,
-                    foreground=fg, bordercolor=border, rowheight=25)
-    style.map("Treeview", background=[("selected", selected)],
-              foreground=[("selected", "#ffffff")])
-    style.configure("Treeview.Heading", background=surface, foreground=fg,
-                    bordercolor=border, relief="flat")
-    style.map("Treeview.Heading", background=[("active", field)])
-    style.configure("Vertical.TScrollbar", background=field, troughcolor=bg,
-                    bordercolor=bg, arrowcolor=fg)
-    style.configure("Horizontal.TScrollbar", background=field, troughcolor=bg,
-                    bordercolor=bg, arrowcolor=fg)
-
-    app.configure(background=bg)
-    app.option_add("*TCombobox*Listbox.background", field)
-    app.option_add("*TCombobox*Listbox.foreground", fg)
-    app.option_add("*TCombobox*Listbox.selectBackground", selected)
-    app.option_add("*TCombobox*Listbox.selectForeground", "#ffffff")
-
-    try:
-        menu = app.nametowidget(app["menu"])
-        menu.configure(background=surface, foreground=fg,
-                       activebackground=accent, activeforeground="#ffffff", borderwidth=0)
-        for child in menu.winfo_children():
-            try:
-                child.configure(background=surface, foreground=fg,
-                                activebackground=accent, activeforeground="#ffffff", borderwidth=0)
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-    canvas = app.library_tab.canvas
-    canvas.configure(background=bg, highlightbackground=border,
-                     highlightcolor=border)
-
-
 def install(app):
-    _apply_dark_theme(app)
-    settings = _load_settings()
+    # Preferences are owned by App (app.settings) and edited in the
+    # Settings tab; we just read them when an event actually fires, so
+    # toggling takes effect immediately.
+    settings = app.settings
 
-    original_load = app.action_load_music_folder
     original_save = app.action_save_config
 
     def load_music_folder():
@@ -187,7 +89,6 @@ def install(app):
         added = 0
         for stem in stems:
             if stem not in existing:
-                from models import Entry
                 app.pack.entries.append(Entry(songs=[stem]))
                 added += 1
         app.music_source_folder = folder
@@ -281,8 +182,7 @@ def install(app):
     # Put the controls directly under the song list, where they are visible
     # regardless of how the condition editor is sized.
     library = app.library_tab
-    left = next((w for w in library.winfo_children()
-                if isinstance(w, ttk.Frame)), None)
+    left = getattr(library, "left", None)
     if left is not None:
         controls = ttk.Frame(left)
         controls.pack(fill="x", pady=(6, 0))
@@ -295,46 +195,6 @@ def install(app):
         preview_button = ttk.Button(
             library, text="Preview song", command=play_pause)
         preview_button.pack(side="bottom")
-
-    def show_settings():
-        dialog = ttk.Frame(app)
-        win = __import__("tkinter").Toplevel(app)
-        win.title("Settings")
-        win.resizable(False, False)
-        win.transient(app)
-        win.grab_set()
-
-        var = __import__("tkinter").BooleanVar(
-            value=settings.get("double_click_preview", False))
-        ttk.Label(win, text="Playback").pack(anchor="w", padx=14, pady=(14, 6))
-        ttk.Checkbutton(
-            win,
-            text="Double-click a song to play/pause its preview",
-            variable=var,
-        ).pack(anchor="w", padx=14, pady=4)
-        ttk.Label(
-            win,
-            text="The setting is saved automatically and applies the next time you use the song list.",
-        ).pack(anchor="w", padx=14, pady=(2, 12))
-
-        def apply():
-            settings["double_click_preview"] = bool(var.get())
-            _save_settings(settings)
-            win.destroy()
-
-        ttk.Button(win, text="Cancel", command=win.destroy).pack(
-            side="right", padx=(4, 14), pady=(0, 14))
-        ttk.Button(win, text="Apply", command=apply).pack(
-            side="right", pady=(0, 14))
-
-    # Add Settings to the existing Help/File menu without changing app.py.
-    try:
-        menu = app.nametowidget(app["menu"])
-        file_menu = app.nametowidget(menu.entrycget(0, "menu"))
-        file_menu.add_separator()
-        file_menu.add_command(label="Settings…", command=show_settings)
-    except Exception:
-        pass
 
     def on_tree_double_click(_event=None):
         if settings.get("double_click_preview", False):

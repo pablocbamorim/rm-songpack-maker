@@ -26,6 +26,9 @@ import yaml_io
 import priority
 import condition_logic
 import biome_customization
+import mod_versions
+import app_settings
+import settings_tab
 from models import Songpack, Entry, BiomeCondition, DimensionCondition, BlockCondition
 
 
@@ -49,6 +52,13 @@ class InfoTab(ttk.Frame):
         self.switch_var = tk.StringVar()
         self.delay_var = tk.StringVar()
         self.root_key_var = tk.StringVar()
+        self.mc_var = tk.StringVar()
+        self.mod_version_var = tk.StringVar()
+        self.platform_var = tk.StringVar()
+        # Guards the target traces while push_from_pack() is filling the
+        # widgets, so loading a songpack doesn't look like a user edit.
+        self._loading = False
+        self._target_job = None
 
         text_rows = [
             ("Songpack Name", self.name_var),
@@ -77,6 +87,57 @@ class InfoTab(ttk.Frame):
                      state="readonly", width=15).grid(row=r, column=1, sticky="w", **pad)
         r += 1
 
+        # ---- target mod build -------------------------------------------
+        ttk.Separator(container, orient="horizontal").grid(
+            row=r, column=0, columnspan=2, sticky="ew", padx=8, pady=(10, 4))
+        r += 1
+        ttk.Label(container, text="Target build (editor only — not written to the YAML)",
+                  font=("", 9, "bold")).grid(row=r, column=1, sticky="w", padx=8)
+        r += 1
+
+        ttk.Label(container, text="Minecraft Version:").grid(
+            row=r, column=0, sticky="e", **pad)
+        mc_row = ttk.Frame(container)
+        mc_row.grid(row=r, column=1, sticky="w", **pad)
+        ttk.Combobox(mc_row, textvariable=self.mc_var, values=mod_versions.MC_CHOICES,
+                     width=22).pack(side="left")
+        ttk.Label(mc_row, text="(you can also type a version that isn't listed)",
+                  foreground="#666").pack(side="left", padx=(8, 0))
+        r += 1
+
+        ttk.Label(container, text="Reactive Music Version:").grid(
+            row=r, column=0, sticky="e", **pad)
+        mod_row = ttk.Frame(container)
+        mod_row.grid(row=r, column=1, sticky="w", **pad)
+        ttk.Combobox(
+            mod_row, textvariable=self.mod_version_var,
+            values=[mod_versions.MOD_VERSION_AUTO] +
+            mod_versions.KNOWN_MOD_VERSIONS,
+            width=22,
+        ).pack(side="left")
+        r += 1
+        self.resolved_label = ttk.Label(
+            container, text="", foreground="#666", justify="left", wraplength=520)
+        self.resolved_label.grid(row=r, column=1, sticky="w", padx=8)
+        r += 1
+
+        ttk.Label(container, text="Mod Platform:").grid(
+            row=r, column=0, sticky="e", **pad)
+        ttk.Combobox(container, textvariable=self.platform_var,
+                     values=mod_versions.PLATFORM_CHOICES, state="readonly",
+                     width=22).grid(row=r, column=1, sticky="w", **pad)
+        r += 1
+        ttk.Label(container, text=mod_versions.PLATFORM_NOTE,
+                  foreground="#666", justify="left").grid(row=r, column=1, sticky="w", padx=8)
+        r += 1
+
+        for var in (self.mc_var, self.mod_version_var, self.platform_var):
+            var.trace_add("write", lambda *_: self._on_target_changed())
+
+        ttk.Separator(container, orient="horizontal").grid(
+            row=r, column=0, columnspan=2, sticky="ew", padx=8, pady=(10, 4))
+        r += 1
+
         ttk.Label(container, text="Entries root key:").grid(
             row=r, column=0, sticky="e", **pad)
         ttk.Entry(container, textvariable=self.root_key_var,
@@ -103,8 +164,42 @@ class InfoTab(ttk.Frame):
         self.pull_into_pack()
         self.app.set_status("Songpack info updated.")
 
+    def _on_target_changed(self):
+        """A target picker moved: record it, refresh the explanation line,
+        and tell the rest of the app so the condition editor can re-gate
+        itself immediately.
+        """
+        if self._loading:
+            return
+        # The Minecraft box is free-text, so coalesce keystrokes instead of
+        # rebuilding the whole condition editor on every character.
+        if self._target_job is not None:
+            try:
+                self.after_cancel(self._target_job)
+            except tk.TclError:
+                pass
+        self._target_job = self.after(250, self._commit_target_change)
+
+    def _commit_target_change(self):
+        self._target_job = None
+        self.pull_into_pack()
+        self.refresh_resolved_label()
+        self.app.on_target_changed()
+
+    def refresh_resolved_label(self):
+        _version, explanation = mod_versions.resolve(
+            self.mc_var.get(), self.mod_version_var.get())
+        self.resolved_label.config(text=explanation)
+
     def push_from_pack(self):
         p = self.app.pack
+        self._loading = True
+        self.mc_var.set(p.minecraft_version or mod_versions.MC_ANY)
+        self.mod_version_var.set(
+            p.mod_version or mod_versions.MOD_VERSION_AUTO)
+        self.platform_var.set(p.platform or mod_versions.PLATFORM_ANY)
+        self._loading = False
+        self.refresh_resolved_label()
         self.name_var.set(p.name)
         self.version_var.set(p.version)
         self.author_var.set(p.author)
@@ -125,6 +220,13 @@ class InfoTab(ttk.Frame):
         p.music_delay_length = self.delay_var.get() or "NORMAL"
         p.entries_root_key = self.root_key_var.get().strip() or "entries"
 
+        mc = self.mc_var.get().strip()
+        p.minecraft_version = "" if mc == mod_versions.MC_ANY else mc
+        mod = self.mod_version_var.get().strip()
+        p.mod_version = "" if mod == mod_versions.MOD_VERSION_AUTO else mod
+        platform = self.platform_var.get().strip()
+        p.platform = "" if platform == mod_versions.PLATFORM_ANY else platform
+
 
 # ---------------------------------------------------------------------------
 # Tab 2: Music & Conditions
@@ -139,6 +241,7 @@ class LibraryTab(ttk.Frame):
         super().__init__(parent)
         self.app = app
         self.selected_entry_id = None
+        self.selected_entry_ids: list[str] = []
         self.category_vars = {}  # cat -> {option: BooleanVar}
 
         # ---- left: entry list -------------------------------------------------
@@ -170,7 +273,7 @@ class LibraryTab(ttk.Frame):
 
         columns = ("song", "summary", "score")
         self.tree = ttk.Treeview(
-            left, columns=columns, show="headings", selectmode="browse", height=22)
+            left, columns=columns, show="headings", selectmode="extended", height=22)
         self.tree.heading("song", text="Song")
         self.tree.heading("summary", text="Conditions (preview)")
         self.tree.heading("score", text="Rarity")
@@ -244,7 +347,7 @@ class LibraryTab(ttk.Frame):
 
     # -- list management -------------------------------------------------
     def refresh_tree(self, keep_selection=False):
-        prev = self.selected_entry_id if keep_selection else None
+        prev = list(self.selected_entry_ids) if keep_selection else []
         self.tree.delete(*self.tree.get_children())
         query = self.search_var.get().strip().lower()
         for entry in self.app.pack.entries:
@@ -258,8 +361,9 @@ class LibraryTab(ttk.Frame):
                 values=(name, condition_logic.summarize_entry(
                     entry), priority.score_entry(entry)),
             )
-        if prev and self.tree.exists(prev):
-            self.tree.selection_set(prev)
+        valid_prev = [iid for iid in prev if self.tree.exists(iid)]
+        if valid_prev:
+            self.tree.selection_set(valid_prev)
 
     def _add_blank_entry(self):
         name = simpledialog.askstring(
@@ -278,19 +382,34 @@ class LibraryTab(ttk.Frame):
         sel = self.tree.selection()
         if not sel:
             return
-        entry_id = sel[0]
-        entry = next(
-            (e for e in self.app.pack.entries if e.id == entry_id), None)
-        if not entry:
+        ids_to_remove = set(sel)
+        entries_to_remove = [
+            e for e in self.app.pack.entries if e.id in ids_to_remove]
+        if not entries_to_remove:
             return
-        if not messagebox.askyesno("Remove entry", f"Remove '{entry.display_name()}' from the songpack?"):
+
+        if len(entries_to_remove) == 1:
+            msg = f"Remove '{entries_to_remove[0].display_name()}' from the songpack?"
+        else:
+            names = ", ".join(e.display_name() for e in entries_to_remove[:5])
+            if len(entries_to_remove) > 5:
+                names += f", +{len(entries_to_remove) - 5} more"
+            msg = f"Remove {len(entries_to_remove)} entries from the songpack?\n\n{names}"
+
+        if not messagebox.askyesno("Remove entry", msg):
             return
+
         self.app.pack.entries = [
-            e for e in self.app.pack.entries if e.id != entry_id]
-        if self.selected_entry_id == entry_id:
+            e for e in self.app.pack.entries if e.id not in ids_to_remove]
+
+        self.selected_entry_ids = [
+            i for i in self.selected_entry_ids if i not in ids_to_remove]
+        if self.selected_entry_id in ids_to_remove:
             self.selected_entry_id = None
+        if not self.selected_entry_ids:
             self._clear_editor(
                 "Select a song from the list on the left to configure what makes it play.")
+
         self.refresh_tree()
         self.app.priority_tab.refresh()
 
@@ -298,15 +417,131 @@ class LibraryTab(ttk.Frame):
         sel = self.tree.selection()
         if not sel:
             return
-        entry_id = sel[0]
-        self.selected_entry_id = entry_id
-        entry = next(
-            (e for e in self.app.pack.entries if e.id == entry_id), None)
-        if entry:
+        self.selected_entry_ids = list(sel)
+        sel_set = set(sel)
+        entries = [e for e in self.app.pack.entries if e.id in sel_set]
+
+        if len(entries) == 1:
+            self.selected_entry_id = entries[0].id
             self.editor_title.config(
-                text=f"Conditions for: {entry.display_name()}")
+                text=f"Conditions for: {entries[0].display_name()}")
             if self.editor_outer.winfo_ismapped():
-                self._build_editor_for(entry)
+                self._build_editor_for(entries[0])
+        elif len(entries) > 1:
+            self.selected_entry_id = None
+            self.editor_title.config(
+                text=f"Editando {len(entries)} músicas ao mesmo tempo")
+            if self.editor_outer.winfo_ismapped():
+                self._build_multi_editor_for(entries)
+
+    def _option_state(self, entries, cat, opt):
+        statuses = [opt in e.selected.get(cat, set()) for e in entries]
+        if all(statuses):
+            return "all"
+        if not any(statuses):
+            return "none"
+        return "some"
+
+    def _bool_state(self, entries, attr):
+        statuses = [bool(getattr(e, attr)) for e in entries]
+        if all(statuses):
+            return "all"
+        if not any(statuses):
+            return "none"
+        return "some"
+
+    def _apply_option_to_all(self, entries, cat, opt, turn_on):
+        for e in entries:
+            s = e.selected.setdefault(cat, set())
+            s.add(opt) if turn_on else s.discard(opt)
+        self._refresh_after_multi_change(entries)
+
+    def _apply_bool_to_all(self, entries, attr, turn_on):
+        for e in entries:
+            setattr(e, attr, turn_on)
+        self._refresh_after_multi_change(entries)
+
+    def _refresh_after_multi_change(self, entries):
+        self._build_multi_editor_for(entries)
+        self.refresh_tree(keep_selection=True)
+        self.app.priority_tab.refresh()
+
+    def _build_multi_editor_for(self, entries):
+        for w in self.editor_frame.winfo_children():
+            w.destroy()
+
+        ttk.Label(
+            self.editor_frame,
+            text=(f"Editando {len(entries)} músicas ao mesmo tempo.\n"
+                  "Clicar numa opção desligada/parcial liga ela para todas as selecionadas.\n"
+                  "Clicar numa opção totalmente ligada desliga ela para todas."),
+            foreground="#666", justify="left",
+        ).pack(anchor="w", padx=10, pady=(10, 6))
+
+        self._target_banner(self.editor_frame)
+
+        for cat in C.FIXED_CATEGORY_ORDER:
+            definition = C.FIXED_CATEGORIES[cat]
+            frame = ttk.LabelFrame(
+                self.editor_frame, text=f"{definition['label']}  (checked options = OR)")
+            frame.pack(fill="x", padx=6, pady=4)
+            for opt in definition["options"]:
+                state = self._option_state(entries, cat, opt)
+                available = self._supports(opt)
+                var = tk.StringVar(
+                    value={"all": "on", "some": "mixed", "none": "off"}[state])
+
+                def on_click(c=cat, o=opt, s=state):
+                    # 'all' ligado -> desliga para todas; 'none'/'some' -> liga para todas
+                    self._apply_option_to_all(
+                        entries, c, o, turn_on=(s != "all"))
+
+                cb = tk.Checkbutton(
+                    frame, text=opt if available else opt +
+                    self._gate_suffix(opt),
+                    variable=var, onvalue="on", offvalue="off",
+                    tristatevalue="mixed", command=on_click,
+                )
+                # Turning an unsupported option ON for a whole selection is
+                # never what you want; turning one OFF still has to work.
+                if not available and state == "none":
+                    cb.configure(state="disabled")
+                cb.pack(side="left", padx=4, pady=2)
+
+        adv_frame = ttk.LabelFrame(
+            self.editor_frame, text="Advanced / Fallback Behaviour")
+        adv_frame.pack(fill="x", padx=6, pady=4)
+        for attr, label in [
+            ("allow_fallback", "allowFallback"),
+            ("force_stop_on_changed", "forceStopMusicOnChanged"),
+            ("force_stop_on_valid", "forceStopMusicOnValid"),
+            ("force_stop_on_invalid", "forceStopMusicOnInvalid"),
+            ("force_start_on_valid", "forceStartMusicOnValid"),
+        ]:
+            state = self._bool_state(entries, attr)
+            var = tk.StringVar(
+                value={"all": "on", "some": "mixed", "none": "off"}[state])
+
+            def on_click(a=attr, s=state):
+                self._apply_bool_to_all(entries, a, turn_on=(s != "all"))
+
+            available = self._supports(attr)
+            flag_cb = tk.Checkbutton(
+                adv_frame, text=label if available else label +
+                self._gate_suffix(attr),
+                variable=var, onvalue="on", offvalue="off",
+                tristatevalue="mixed", command=on_click,
+            )
+            if not available and state == "none":
+                flag_cb.configure(state="disabled")
+            flag_cb.pack(anchor="w", padx=4, pady=1)
+
+        ttk.Label(
+            self.editor_frame,
+            text=("Bioma, dimensão, blocos próximos e condições customizadas continuam sendo\n"
+                  "editados com apenas uma música selecionada por vez."),
+            foreground="#666", justify="left",
+        ).pack(anchor="w", padx=10, pady=(8, 10))
 
     def _clear_editor(self, message):
         for w in self.editor_frame.winfo_children():
@@ -319,19 +554,21 @@ class LibraryTab(ttk.Frame):
     def _toggle_editor(self):
         if self.editor_outer.winfo_ismapped():
             self.editor_outer.pack_forget()
-            self.editor_title.pack_forget()  # add: hide the title too
+            self.editor_title.pack_forget()
             self.toggle_btn.config(text="▸ Show editor")
             self.left.pack_configure(fill="both", expand=True)
         else:
-            self.editor_title.pack(side="left")  # add: restore the title
+            self.editor_title.pack(side="left")
             self.editor_outer.pack(fill="both", expand=True, pady=(6, 0))
             self.toggle_btn.config(text="▾ Hide editor")
             self.left.pack_configure(fill="y", expand=False)
-            if self.selected_entry_id:
-                entry = next(
-                    (e for e in self.app.pack.entries if e.id == self.selected_entry_id), None)
-                if entry:
-                    self._build_editor_for(entry)
+
+            ids = self.selected_entry_ids
+            entries = [e for e in self.app.pack.entries if e.id in set(ids)]
+            if len(entries) == 1:
+                self._build_editor_for(entries[0])
+            elif len(entries) > 1:
+                self._build_multi_editor_for(entries)
 
     # -- helpers -------------------------------------------------
     def _available_biome_values(self, entry: Entry, is_tag: bool):
@@ -349,13 +586,39 @@ class LibraryTab(ttk.Frame):
         custom = self.app.biome_custom_tags if is_tag else self.app.biome_custom_biomes
         return custom.get(value, biome_customization.default_color(value, is_tag))
 
-    # -- editor construction -------------------------------------------------
-    def _build_editor_for(self, entry: Entry):
-        for w in self.editor_frame.winfo_children():
-            w.destroy()
-        self.category_vars = {}
+    # -- target mod version gating -------------------------------------------
+    def _supports(self, feature: str) -> bool:
+        """Does the songpack's target mod build have this condition? With
+        no target chosen this is always True, so the editor never gets in
+        the way until you've told it what you're building for.
+        """
+        return mod_versions.supports(self.app.effective_mod_version(), feature)
 
-        # -- fixed checkbox categories --
+    @staticmethod
+    def _gate_suffix(feature: str) -> str:
+        req = mod_versions.requirement(feature)
+        return f"  (needs RM {req}+)" if req else ""
+
+    def _target_banner(self, parent):
+        """One line at the top of the editor saying what's being targeted,
+        so a greyed-out checkbox is never a mystery.
+        """
+        version = self.app.effective_mod_version()
+        if not version:
+            text = ("No target build set — every documented condition is available. "
+                    "Set a Minecraft version in the Songpack Info tab to have the editor "
+                    "hide conditions your mod build doesn't have.")
+        else:
+            text = (f"Targeting Reactive Music {version}. Conditions added in later versions are "
+                    "disabled below. Ones already set on this entry stay editable so you can "
+                    "remove them.")
+        ttk.Label(parent, text=text, foreground="#666",
+                  justify="left", wraplength=620).pack(anchor="w", padx=8, pady=(8, 2))
+
+    def _build_fixed_categories(self, entry: Entry):
+        """The fixed checkbox groups, with anything the target build
+        predates disabled (unless the entry already uses it).
+        """
         for cat in C.FIXED_CATEGORY_ORDER:
             definition = C.FIXED_CATEGORIES[cat]
             frame = ttk.LabelFrame(
@@ -363,14 +626,30 @@ class LibraryTab(ttk.Frame):
             frame.pack(fill="x", padx=6, pady=4)
             option_vars = {}
             for opt in definition["options"]:
-                var = tk.BooleanVar(
-                    value=opt in entry.selected.get(cat, set()))
-                ttk.Checkbutton(
-                    frame, text=opt, variable=var,
+                already_set = opt in entry.selected.get(cat, set())
+                available = self._supports(opt)
+                var = tk.BooleanVar(value=already_set)
+                label = opt if available else opt + self._gate_suffix(opt)
+                check = ttk.Checkbutton(
+                    frame, text=label, variable=var,
                     command=lambda c=cat: self._on_fixed_changed(entry, c),
-                ).pack(side="left", padx=4, pady=2)
+                )
+                if not available and not already_set:
+                    check.state(["disabled"])
+                check.pack(side="left", padx=4, pady=2)
                 option_vars[opt] = var
             self.category_vars[cat] = option_vars
+
+    # -- editor construction -------------------------------------------------
+    def _build_editor_for(self, entry: Entry):
+        for w in self.editor_frame.winfo_children():
+            w.destroy()
+        self.category_vars = {}
+
+        self._target_banner(self.editor_frame)
+
+        # -- fixed checkbox categories --
+        self._build_fixed_categories(entry)
 
         # -- biome --
         biome_frame = ttk.LabelFrame(self.editor_frame, text="Biome")
@@ -393,10 +672,17 @@ class LibraryTab(ttk.Frame):
                     entry, self.biome_is_tag_var.get())
             )
 
-        ttk.Checkbutton(
-            row1, text="Use as BIOMETAG (broader match)", variable=self.biome_is_tag_var,
-            command=_on_biome_tag_toggle,
-        ).pack(side="left", padx=8)
+        tag_available = self._supports("BIOMETAG")
+        tag_check = ttk.Checkbutton(
+            row1,
+            text="Use as BIOMETAG (broader match)" if tag_available
+            else "Use as BIOMETAG (broader match)" + self._gate_suffix("BIOMETAG"),
+            variable=self.biome_is_tag_var, command=_on_biome_tag_toggle,
+        )
+        if not tag_available:
+            self.biome_is_tag_var.set(False)
+            tag_check.state(["disabled"])
+        tag_check.pack(side="left", padx=8)
         ttk.Button(row1, text="Add", command=lambda: self._add_biome(
             entry)).pack(side="left", padx=4)
         ttk.Button(row1, text="Add custom…", command=lambda: self._open_custom_biome_dialog(
@@ -465,7 +751,31 @@ class LibraryTab(ttk.Frame):
             self.editor_frame, text="Nearby Blocks (25-block radius)")
         block_frame.pack(fill="x", padx=6, pady=4)
 
-        brow1 = ttk.Frame(block_frame)
+        # BLOCK= only exists from 1.2.0 onward. If the target build is older
+        # and the entry doesn't already use it, the whole section collapses
+        # to an explanation instead of being silently broken.
+        block_available = self._supports("BLOCK") or bool(entry.blocks)
+        if not block_available:
+            ttk.Label(
+                block_frame,
+                text=("Nearby-block detection was added in Reactive Music "
+                      f"{mod_versions.requirement('BLOCK')}. Raise the target build in the "
+                      "Songpack Info tab to use it."),
+                foreground="#666", justify="left", wraplength=560,
+            ).pack(anchor="w", padx=6, pady=6)
+            block_body = ttk.Frame(self.editor_frame)  # built but never packed
+        else:
+            block_body = block_frame
+            if not self._supports("BLOCK"):
+                ttk.Label(
+                    block_frame,
+                    text=(f"{self.WARNING_PREFIX}This entry already uses BLOCK=, which the target "
+                          f"build predates (needs {mod_versions.requirement('BLOCK')}+). It is kept "
+                          "editable so you can remove it."),
+                    foreground="#b45309", justify="left", wraplength=560,
+                ).pack(anchor="w", padx=6, pady=(4, 0))
+
+        brow1 = ttk.Frame(block_body)
         brow1.pack(fill="x", padx=4, pady=2)
         ttk.Label(brow1, text="Block:").pack(side="left")
         self.block_search_var = tk.StringVar()
@@ -482,11 +792,11 @@ class LibraryTab(ttk.Frame):
         ttk.Button(brow1, text="Add", command=lambda: self._add_block(
             entry)).pack(side="left", padx=4)
         ttk.Label(
-            block_frame, text="Tip: use /reactivemusic logBlockCounter in-game to see real counts.",
+            block_body, text="Tip: use /reactivemusic logBlockCounter in-game to see real counts.",
             foreground="#666",
         ).pack(anchor="w", padx=4)
 
-        brow2 = ttk.Frame(block_frame)
+        brow2 = ttk.Frame(block_body)
         brow2.pack(fill="x", padx=4)
         ttk.Label(brow2, text="Combine multiple blocks with:").pack(side="left")
         self.block_combine_var = tk.StringVar(value=entry.block_combine)
@@ -498,12 +808,12 @@ class LibraryTab(ttk.Frame):
             ).pack(side="left", padx=4)
 
         self.block_listbox = tk.Listbox(
-            block_frame, height=min(4, max(2, len(entry.blocks))))
+            block_body, height=min(4, max(2, len(entry.blocks))))
         self.block_listbox.pack(fill="x", padx=4, pady=4)
         for b in entry.blocks:
             self.block_listbox.insert(
                 "end", f"{b.block_id}  (min {b.min_count})")
-        ttk.Button(block_frame, text="Remove selected", command=lambda: self._remove_block(entry)).pack(
+        ttk.Button(block_body, text="Remove selected", command=lambda: self._remove_block(entry)).pack(
             anchor="w", padx=4, pady=(0, 4)
         )
 
@@ -513,13 +823,18 @@ class LibraryTab(ttk.Frame):
         adv_frame.pack(fill="x", padx=6, pady=4)
 
         self.allow_fallback_var = tk.BooleanVar(value=entry.allow_fallback)
-        ttk.Checkbutton(
+        fallback_available = self._supports("allow_fallback")
+        fallback_check = ttk.Checkbutton(
             adv_frame,
             text="allowFallback — once this entry's own song(s) are exhausted, let a broader\n"
-                 "entry play instead of repeating (recommended ON, especially for rare/narrow entries)",
+                 "entry play instead of repeating (recommended ON, especially for rare/narrow entries)"
+                 + ("" if fallback_available else self._gate_suffix("allow_fallback")),
             variable=self.allow_fallback_var,
             command=lambda: self._on_advanced_changed(entry),
-        ).pack(anchor="w", padx=4, pady=2)
+        )
+        if not fallback_available and not entry.allow_fallback:
+            fallback_check.state(["disabled"])
+        fallback_check.pack(anchor="w", padx=4, pady=2)
 
         self.force_stop_changed_var = tk.BooleanVar(
             value=entry.force_stop_on_changed)
@@ -940,6 +1255,10 @@ class App(tk.Tk):
         self.biome_custom_biomes = {}
         self.biome_custom_tags = {}
 
+        # Editor-wide preferences (theme, preview behaviour). Loaded before
+        # the tabs are built because SettingsTab reads them on construction.
+        self.settings = app_settings.load()
+
         self.status_var = tk.StringVar(
             value="Ready. Start with File > New Songpack, Load Config…, or Load Music Folder…"
         )
@@ -952,10 +1271,12 @@ class App(tk.Tk):
         self.info_tab = InfoTab(self.notebook, self)
         self.library_tab = LibraryTab(self.notebook, self)
         self.priority_tab = PriorityTab(self.notebook, self)
+        self.settings_tab = settings_tab.SettingsTab(self.notebook, self)
 
         self.notebook.add(self.info_tab, text="Songpack Info")
         self.notebook.add(self.library_tab, text="Music & Conditions")
         self.notebook.add(self.priority_tab, text="Priority Order")
+        self.notebook.add(self.settings_tab, text="Settings")
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
         status_bar = ttk.Label(
@@ -963,6 +1284,7 @@ class App(tk.Tk):
         status_bar.pack(fill="x", side="bottom")
 
         self.refresh_all()
+        self.apply_theme()
 
     @property
     def pack(self) -> Songpack:
@@ -975,6 +1297,7 @@ class App(tk.Tk):
         self.info_tab.push_from_pack()
         self.library_tab.refresh_tree()
         self.priority_tab.refresh()
+        self.settings_tab.refresh()
 
     def _on_tab_changed(self, _event=None):
         self.info_tab.pull_into_pack()
@@ -984,6 +1307,64 @@ class App(tk.Tk):
     def on_entry_conditions_changed(self, _entry: Entry):
         self.library_tab.refresh_tree(keep_selection=True)
         self.priority_tab.refresh()
+
+    # -- target mod build -------------------------------------------
+    def effective_mod_version(self):
+        """The mod version this songpack is aimed at, or None when no
+        target has been chosen (in which case nothing is restricted).
+        """
+        version, _explanation = mod_versions.resolve(
+            self.pack_data.minecraft_version, self.pack_data.mod_version)
+        return version
+
+    def on_target_changed(self):
+        """The Minecraft/mod version picker moved, so the condition editor
+        has to re-gate itself against the new target.
+        """
+        lib = self.library_tab
+        ids = set(lib.selected_entry_ids)
+        entries = [e for e in self.pack_data.entries if e.id in ids]
+        if lib.editor_outer.winfo_ismapped():
+            if len(entries) == 1:
+                lib._build_editor_for(entries[0])
+            elif len(entries) > 1:
+                lib._build_multi_editor_for(entries)
+
+        version = self.effective_mod_version()
+        problems = mod_versions.validate_pack(self.pack_data, version)
+        if not version:
+            self.set_status(
+                "No target build set — all documented conditions are available.")
+        elif problems:
+            self.set_status(
+                f"Targeting Reactive Music {version}. "
+                f"{len(problems)} entry/entries use conditions this build doesn't have "
+                "(you'll be warned again on save).")
+        else:
+            self.set_status(f"Targeting Reactive Music {version}.")
+
+    # -- settings -------------------------------------------------
+    def apply_theme(self):
+        """(Re-)apply the light/dark palette from the current settings."""
+        app_settings.apply_theme(
+            self, bool(self.settings.get("dark_theme", True)))
+
+    def save_settings(self):
+        try:
+            app_settings.save(self.settings)
+        except OSError as exc:
+            messagebox.showerror(
+                "Settings", f"Could not save settings:\n{exc}")
+
+    def on_biome_colors_changed(self):
+        """A biome/tag colour or definition changed in the Settings tab, so
+        the condition editor's biome list needs redrawing.
+        """
+        lib = self.library_tab
+        ids = set(lib.selected_entry_ids)
+        entries = [e for e in self.pack_data.entries if e.id in ids]
+        if len(entries) == 1 and lib.editor_outer.winfo_ismapped():
+            lib._build_editor_for(entries[0])
 
     # -- menu -------------------------------------------------
     def _build_menu(self):
@@ -1020,7 +1401,9 @@ class App(tk.Tk):
         self.biome_custom_biomes = {}
         self.biome_custom_tags = {}
         self.refresh_all()
-        self.set_status("Started a new, empty songpack.")
+        self.set_status(
+            "Started a new, empty songpack. Set its Minecraft version in Songpack Info "
+            "so the editor can match the conditions to your mod build.")
 
     def action_load_config(self):
         path = filedialog.askdirectory(
@@ -1030,6 +1413,7 @@ class App(tk.Tk):
         try:
             self.pack_data = yaml_io.load_songpack(path)
             biomes, tags = biome_customization.load(path)
+            mod_versions.apply_to_pack(self.pack_data, mod_versions.load(path))
         except Exception as exc:  # noqa: BLE001 - surface any load error to the user
             messagebox.showerror("Load failed", str(exc))
             return
@@ -1037,8 +1421,10 @@ class App(tk.Tk):
         self.biome_custom_tags = tags
         self.current_save_folder = path
         self.refresh_all()
+        version = self.effective_mod_version()
+        target = f", targeting Reactive Music {version}" if version else ""
         self.set_status(
-            f"Loaded {len(self.pack_data.entries)} entries from {path}")
+            f"Loaded {len(self.pack_data.entries)} entries from {path}{target}")
 
     def action_load_music_folder(self):
         folder = filedialog.askdirectory(
@@ -1064,6 +1450,8 @@ class App(tk.Tk):
         if not self.pack_data.entries:
             if not messagebox.askyesno("Save Config", "This songpack has no entries yet. Save anyway?"):
                 return
+        if not self._confirm_target_problems():
+            return
         folder = filedialog.askdirectory(
             title="Choose (or create) a folder to save this songpack into")
         if not folder:
@@ -1073,6 +1461,7 @@ class App(tk.Tk):
                 self.pack_data, folder, copy_music_from=None)
             biome_customization.save(
                 folder, self.biome_custom_biomes, self.biome_custom_tags)
+            mod_versions.save(folder, self.pack_data)
         except Exception as exc:
             messagebox.showerror("Save failed", str(exc))
             return
@@ -1082,7 +1471,29 @@ class App(tk.Tk):
             "Saved",
             f"Songpack saved to:\n{path}\n\n"
             f"Biome customization saved to:\n"
-            f"{os.path.join(folder, biome_customization.CONFIG_FILENAME)}",
+            f"{os.path.join(folder, biome_customization.CONFIG_FILENAME)}\n\n"
+            f"Target build saved to:\n"
+            f"{os.path.join(folder, mod_versions.TARGET_FILENAME)}",
+        )
+
+    def _confirm_target_problems(self) -> bool:
+        """If any entry uses a condition the target mod build predates,
+        list them and let the user decide. Saving is still allowed --
+        the target is the user's own note, not a hard rule.
+        """
+        problems = mod_versions.validate_pack(
+            self.pack_data, self.effective_mod_version())
+        if not problems:
+            return True
+        shown = "\n".join(problems[:12])
+        if len(problems) > 12:
+            shown += f"\n… and {len(problems) - 12} more"
+        return messagebox.askyesno(
+            "Conditions newer than your target build",
+            f"These entries use conditions that Reactive Music "
+            f"{self.effective_mod_version()} doesn't support:\n\n{shown}\n\n"
+            "They will be written to the YAML as-is and older mod builds will ignore "
+            "or fail to load them.\n\nSave anyway?",
         )
 
     def action_show_about(self):

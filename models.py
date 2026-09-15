@@ -109,6 +109,14 @@ class Songpack:
     music_switch_speed: str = "NORMAL"
     music_delay_length: str = "NORMAL"
 
+    # Which mod build this songpack is aimed at. Not part of the
+    # ReactiveMusic.yaml format -- it's editor metadata kept in
+    # songpack_target.json so the condition editor can hide events the
+    # target mod version predates. See mod_versions.py.
+    minecraft_version: str = ""   # "" / "Any ..." -> no target chosen
+    mod_version: str = ""         # "" -> derive from minecraft_version
+    platform: str = ""            # Fabric / NeoForge / Forge, metadata only
+
     entries: List[Entry] = field(default_factory=list)
 
     # The top-level YAML key entries were found under when loading an

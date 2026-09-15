@@ -19,6 +19,7 @@ This program provides a graphical interface for building that YAML instead of ed
 The editor currently provides:
 
 - Songpack metadata editing: name, version, author, description, credits, music switch speed, and music delay length.
+- A target build picker (Minecraft version, Reactive Music version, mod platform). The mod version defaults to the newest release known for the selected Minecraft version, and the condition editor then only offers conditions that build actually supports.
 - Music-folder scanning for `.mp3`, `.ogg`, and `.wav` files. The editor uses the filename without its extension as the song identifier.
 - Condition editing for ReactiveMusic's fixed event categories: special events, time, weather, world height, entities, actions, location, and combat.
 - Biome conditions, including `BIOME=` and `BIOMETAG=` conditions, with OR/AND combination controls.
@@ -79,6 +80,26 @@ The important fields are:
 - **Author**, **Description**, **Credits** — metadata written to the YAML.
 - **Music Switch Speed** — `INSTANT`, `SHORT`, `NORMAL`, or `LONG`.
 - **Music Delay Length** — `NONE`, `SHORT`, `NORMAL`, or `LONG`.
+
+### 2a. Choose the target build
+
+The same tab has a **Target build** section. It is editor metadata: none of it is written into `ReactiveMusic.yaml`.
+
+- **Minecraft Version** — the version you are building the songpack for. The list covers the versions this editor has release data for, and you can type any other version.
+- **Reactive Music Version** — left on *Auto*, this resolves to the newest mod release known for the selected Minecraft version. Set it by hand to target a specific build, or when you are on a Minecraft version the editor has no release data for.
+- **Mod Platform** — Fabric, NeoForge or Forge. Recorded for your own reference only; no documented songpack event behaves differently between loaders.
+
+Once a target resolves to a known mod version, the **Music & Conditions** tab disables conditions that build predates and labels them with the version they need. Conditions an entry already uses stay editable so you can remove them, and **Save Config…** warns before writing a songpack that uses conditions newer than its target.
+
+Known feature gates, from the mod's release notes and `MAKING_SONGPACKS.md`:
+
+| Feature | Added in |
+| --- | --- |
+| `BIOMETAG=` | 0.4.0 |
+| `VILLAGE`, `BOSS`, `NEARBY_MOBS`, `allowFallback` | 0.5.0 |
+| `BLOCK=...,count` | 1.2.0 |
+
+Anything not listed is treated as always available, so the editor never blocks a condition it has no evidence against. The table lives in `mod_versions.py` and is commented with its sources.
 
 The editor also shows the detected YAML entries root key. Existing files are inspected when loaded; new songpacks use `entries` unless you change it.
 
@@ -161,10 +182,11 @@ The editor writes:
 ```text
 Your Songpack/
 ├── ReactiveMusic.yaml
-└── biome_customization.json
+├── biome_customization.json
+└── songpack_target.json
 ```
 
-The second file is editor metadata for custom biome/biome-tag display colors; ReactiveMusic itself does not use it for its event logic.
+The second and third files are editor metadata: custom biome/biome-tag display colors, and the target Minecraft/mod version. ReactiveMusic itself does not read either of them.
 
 Create a `music` subfolder and place all referenced audio files there:
 
@@ -257,7 +279,7 @@ For the full ReactiveMusic songpack format, see the official [Making Songpacks d
 
 The editor build currently uses a four-part version number in the form `0.x.y.z` and displays it in the Help menu. The repository follows the project's versioning convention: `z` is used for smaller fixes/iterations, `y` for a successfully completed larger feature, and `x` for a bundle of larger features.
 
-Current editor build: `0.1.4.2`.
+Current editor build: `0.1.7.0`.
 
 ## License and upstream project
 
