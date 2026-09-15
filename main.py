@@ -32,10 +32,13 @@ def _set_window_icon(application):
 
 
 def main():
+    # Install biome support before App() is constructed.  This lets the
+    # LibraryTab build the custom biome controls normally and lets App's File
+    # menu capture the customized load/save/new callbacks during initialization.
+    biome_customization.install()
     application = app.App()
     _set_window_icon(application)
     ui_enhancements.install(application)
-    biome_customization.install(application)
     version_ui.install(application)
     application.mainloop()
 
