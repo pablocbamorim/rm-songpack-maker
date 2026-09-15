@@ -1,0 +1,121 @@
+name: Apply biome entrypoint fix
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Patch app.py and bump version
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          app_path = Path("app.py")
+          text = app_path.read_text(encoding="utf-8")
+          old = '''def main():
+    app = App()
+    app.mainloop()
+'''
+          new = '''def main():
+    # app.py is itself a supported entry point.  The biome customization
+    # installer must run before App() so LibraryTab and the File menu are
+    # constructed with the customized behavior.
+    import biome_customization
+    biome_customization.install()
+    app = App()
+    app.mainloop()
+'''
+          if old not in text:
+              raise SystemExit("Expected app.py main() block was not found")
+          if "biome_customization.install()" not in text:
+              app_path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          version_path = Path("version_ui.py")
+          version = version_path.read_text(encoding="utf-8")
+          version_path.write_text(version.replace('BUILD_VERSION = "v0.1.3"', 'BUILD_VERSION = "v0.1.4.0"', 1), encoding="utf-8")
+          PY
+
+      - name: Validate syntax and exercise the GUI integration headlessly
+        shell: bash
+        run: |
+          python -m py_compile app.py main.py biome_customization.py ui_enhancements.py models.py constants.py yaml_io.py
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb python3-tk
+          xvfb-run -a python - <<'PY'
+          import json
+          import os
+          import tempfile
+          import tkinter.messagebox as tk_messagebox
+          from pathlib import Path
+
+          import app
+          import biome_customization
+          import yaml_io
+          from models import Entry, BiomeCondition
+
+          biome_customization.install()
+          application = app.App()
+          library = application.library_tab
+
+          entry = Entry(songs=["TestSong"])
+          entry.biomes = [BiomeCondition("beach"), BiomeCondition("IS_OCEAN", True)]
+          application.pack.entries.append(entry)
+          application.refresh_all()
+          library._build_editor_for(entry)
+
+          assert any(child.winfo_class() == "TButton" and child.cget("text") == "Add custom…"
+                     for child in library.biome_combobox.master.winfo_children()), "Add custom button missing"
+          assert "beach" not in library._available_biome_values(entry, False), "Used biome still offered"
+          assert "IS_OCEAN" not in library._available_biome_values(entry, True), "Used biome tag still offered"
+          assert library.biome_listbox.itemcget(0, "foreground"), "Biome color was not assigned"
+          assert library.biome_listbox.itemcget(1, "foreground"), "Biome-tag color was not assigned"
+
+          application.biome_custom_biomes["my_biome"] = "#123456"
+          application.biome_custom_tags["MY_TAG"] = "#abcdef"
+          assert "my_biome" in library._available_biome_values(entry, False)
+          assert "MY_TAG" in library._available_biome_values(entry, True)
+
+          with tempfile.TemporaryDirectory() as folder:
+              Path(folder, "ReactiveMusic.yaml").write_text("name: Test\nentries: []\n", encoding="utf-8")
+              application.pack.entries = [entry]
+              application.pack.name = "Test"
+              yaml_io.save_songpack(application.pack, folder)
+              biome_customization._save(folder, application.biome_custom_biomes, application.biome_custom_tags)
+              data = json.loads(Path(folder, biome_customization.CONFIG_FILENAME).read_text(encoding="utf-8"))
+              assert data["biomes"]["my_biome"] == "#123456"
+              assert data["biome_tags"]["MY_TAG"] == "#abcdef"
+              loaded_biomes, loaded_tags = biome_customization._load(folder)
+              assert loaded_biomes == {"my_biome": "#123456"}
+              assert loaded_tags == {"MY_TAG": "#abcdef"}
+
+          original_askyesno = tk_messagebox.askyesno
+          tk_messagebox.askyesno = lambda *args, **kwargs: True
+          try:
+              application.action_new_songpack()
+          finally:
+              tk_messagebox.askyesno = original_askyesno
+          assert application.biome_custom_biomes == {}, "New songpack retained custom biomes"
+          assert application.biome_custom_tags == {}, "New songpack retained custom biome tags"
+
+          application.destroy()
+          print("Biome GUI integration test passed")
+          PY
+
+      - name: Commit the fix and remove this one-shot workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app.py version_ui.py
+          git rm .github/workflows/biome-fix-once.yml
+          git commit -m "Fix biome customization entrypoint and bump version"
+          git push
