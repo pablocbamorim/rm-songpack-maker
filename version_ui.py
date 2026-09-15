@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import webbrowser
 
-BUILD_VERSION = "v0.1.4.3"
+BUILD_VERSION = "v0.1.5.0"
 REPOSITORY_URL = "https://github.com/pablocbamorim/rm-songpack-maker"
 README_URL = f"{REPOSITORY_URL}#readme"
 
