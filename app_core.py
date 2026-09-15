@@ -19,7 +19,6 @@ from __future__ import annotations
 import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog, colorchooser
-import customtkinter as ctk
 
 import constants as C
 import block_data
@@ -368,228 +367,883 @@ class LibraryTab(ttk.Frame):
 
     def _add_blank_entry(self):
         name = simpledialog.askstring(
-            "Add Entry", "Song filename (without extension):")
-        if not name:
-            return
-        if not name.lower().endswith((".mp3", ".ogg", ".wav")):
-            name += ".mp3"
-        self.app.pack.entries.append(Entry(songs=[name]))
+            "Add Entry", "Song filename (without extension), e.g. MyTrack:", parent=self,
+        )
+        entry = Entry(songs=[name] if name else [])
+        self.app.pack.entries.append(entry)
         self.refresh_tree()
+        self.tree.selection_set(entry.id)
+        self.tree.see(entry.id)
         self.app.priority_tab.refresh()
+        self.app.set_status(
+            f"Added entry '{entry.display_name()}'. Configure its conditions below.")
 
     def _remove_selected(self):
-        ids = set(self.tree.selection())
-        if not ids:
+        sel = self.tree.selection()
+        if not sel:
             return
-        if not messagebox.askyesno("Remove", f"Remove {len(ids)} selected entr{'y' if len(ids) == 1 else 'ies'}?"):
+        ids_to_remove = set(sel)
+        entries_to_remove = [
+            e for e in self.app.pack.entries if e.id in ids_to_remove]
+        if not entries_to_remove:
             return
-        self.app.pack.entries = [e for e in self.app.pack.entries if e.id not in ids]
-        self.selected_entry_ids = []
-        self.selected_entry_id = None
-        self._clear_editor()
+
+        if len(entries_to_remove) == 1:
+            msg = f"Remove '{entries_to_remove[0].display_name()}' from the songpack?"
+        else:
+            names = ", ".join(e.display_name() for e in entries_to_remove[:5])
+            if len(entries_to_remove) > 5:
+                names += f", +{len(entries_to_remove) - 5} more"
+            msg = f"Remove {len(entries_to_remove)} entries from the songpack?\n\n{names}"
+
+        if not messagebox.askyesno("Remove entry", msg):
+            return
+
+        self.app.pack.entries = [
+            e for e in self.app.pack.entries if e.id not in ids_to_remove]
+
+        self.selected_entry_ids = [
+            i for i in self.selected_entry_ids if i not in ids_to_remove]
+        if self.selected_entry_id in ids_to_remove:
+            self.selected_entry_id = None
+        if not self.selected_entry_ids:
+            self._clear_editor(
+                "Select a song from the list on the left to configure what makes it play.")
+
         self.refresh_tree()
         self.app.priority_tab.refresh()
 
     def _on_select(self, _event=None):
-        ids = list(self.tree.selection())
-        self.selected_entry_ids = ids
-        self.selected_entry_id = ids[0] if ids else None
-        if len(ids) == 1:
-            entry = next((e for e in self.app.pack.entries if e.id == ids[0]), None)
-            if entry:
-                self._build_editor_for(entry)
-        elif len(ids) > 1:
-            entries = [e for e in self.app.pack.entries if e.id in ids]
-            self._build_multi_editor_for(entries)
-        else:
-            self._clear_editor()
+        sel = self.tree.selection()
+        if not sel:
+            return
+        self.selected_entry_ids = list(sel)
+        sel_set = set(sel)
+        entries = [e for e in self.app.pack.entries if e.id in sel_set]
 
-    def _clear_editor(self):
-        for child in self.editor_frame.winfo_children():
-            child.destroy()
+        if len(entries) == 1:
+            self.selected_entry_id = entries[0].id
+            self.editor_title.config(
+                text=f"Conditions for: {entries[0].display_name()}")
+            if self.editor_outer.winfo_ismapped():
+                self._build_editor_for(entries[0])
+        elif len(entries) > 1:
+            self.selected_entry_id = None
+            self.editor_title.config(
+                text=f"Editando {len(entries)} músicas ao mesmo tempo")
+            if self.editor_outer.winfo_ismapped():
+                self._build_multi_editor_for(entries)
+
+    def _option_state(self, entries, cat, opt):
+        statuses = [opt in e.selected.get(cat, set()) for e in entries]
+        if all(statuses):
+            return "all"
+        if not any(statuses):
+            return "none"
+        return "some"
+
+    def _bool_state(self, entries, attr):
+        statuses = [bool(getattr(e, attr)) for e in entries]
+        if all(statuses):
+            return "all"
+        if not any(statuses):
+            return "none"
+        return "some"
+
+    def _apply_option_to_all(self, entries, cat, opt, turn_on):
+        for e in entries:
+            s = e.selected.setdefault(cat, set())
+            s.add(opt) if turn_on else s.discard(opt)
+        self._refresh_after_multi_change(entries)
+
+    def _apply_bool_to_all(self, entries, attr, turn_on):
+        for e in entries:
+            setattr(e, attr, turn_on)
+        self._refresh_after_multi_change(entries)
+
+    def _refresh_after_multi_change(self, entries):
+        self._build_multi_editor_for(entries)
+        self.refresh_tree(keep_selection=True)
+        self.app.priority_tab.refresh()
+
+    def _build_multi_editor_for(self, entries):
+        for w in self.editor_frame.winfo_children():
+            w.destroy()
+
         ttk.Label(
             self.editor_frame,
-            text="Select a song from the list on the left to configure what makes it play.",
-            foreground="#666",
-        ).pack(anchor="w", padx=10, pady=10)
+            text=(f"Editando {len(entries)} músicas ao mesmo tempo.\n"
+                  "Clicar numa opção desligada/parcial liga ela para todas as selecionadas.\n"
+                  "Clicar numa opção totalmente ligada desliga ela para todas."),
+            foreground="#666", justify="left",
+        ).pack(anchor="w", padx=10, pady=(10, 6))
+
+        self._target_banner(self.editor_frame)
+
+        for cat in C.FIXED_CATEGORY_ORDER:
+            definition = C.FIXED_CATEGORIES[cat]
+            frame = ttk.LabelFrame(
+                self.editor_frame, text=f"{definition['label']}  (checked options = OR)")
+            frame.pack(fill="x", padx=6, pady=4)
+            for opt in definition["options"]:
+                state = self._option_state(entries, cat, opt)
+                available = self._supports(opt)
+                var = tk.StringVar(
+                    value={"all": "on", "some": "mixed", "none": "off"}[state])
+
+                def on_click(c=cat, o=opt, s=state):
+                    # 'all' ligado -> desliga para todas; 'none'/'some' -> liga para todas
+                    self._apply_option_to_all(
+                        entries, c, o, turn_on=(s != "all"))
+
+                cb = tk.Checkbutton(
+                    frame, text=opt if available else opt +
+                    self._gate_suffix(opt),
+                    variable=var, onvalue="on", offvalue="off",
+                    tristatevalue="mixed", command=on_click,
+                )
+                # Turning an unsupported option ON for a whole selection is
+                # never what you want; turning one OFF still has to work.
+                if not available and state == "none":
+                    cb.configure(state="disabled")
+                cb.pack(side="left", padx=4, pady=2)
+
+        adv_frame = ttk.LabelFrame(
+            self.editor_frame, text="Advanced / Fallback Behaviour")
+        adv_frame.pack(fill="x", padx=6, pady=4)
+        for attr, label in [
+            ("allow_fallback", "allowFallback"),
+            ("force_stop_on_changed", "forceStopMusicOnChanged"),
+            ("force_stop_on_valid", "forceStopMusicOnValid"),
+            ("force_stop_on_invalid", "forceStopMusicOnInvalid"),
+            ("force_start_on_valid", "forceStartMusicOnValid"),
+        ]:
+            state = self._bool_state(entries, attr)
+            var = tk.StringVar(
+                value={"all": "on", "some": "mixed", "none": "off"}[state])
+
+            def on_click(a=attr, s=state):
+                self._apply_bool_to_all(entries, a, turn_on=(s != "all"))
+
+            available = self._supports(attr)
+            flag_cb = tk.Checkbutton(
+                adv_frame, text=label if available else label +
+                self._gate_suffix(attr),
+                variable=var, onvalue="on", offvalue="off",
+                tristatevalue="mixed", command=on_click,
+            )
+            if not available and state == "none":
+                flag_cb.configure(state="disabled")
+            flag_cb.pack(anchor="w", padx=4, pady=1)
+
+        ttk.Label(
+            self.editor_frame,
+            text=("Bioma, dimensão, blocos próximos e condições customizadas continuam sendo\n"
+                  "editados com apenas uma música selecionada por vez."),
+            foreground="#666", justify="left",
+        ).pack(anchor="w", padx=10, pady=(8, 10))
+
+    def _clear_editor(self, message):
+        for w in self.editor_frame.winfo_children():
+            w.destroy()
+        ttk.Label(self.editor_frame, text=message, foreground="#666").pack(
+            anchor="w", padx=10, pady=10)
+        self.editor_title.config(
+            text="Select a song on the left to view/edit its trigger conditions.")
 
     def _toggle_editor(self):
         if self.editor_outer.winfo_ismapped():
             self.editor_outer.pack_forget()
-            self.toggle_btn.configure(text="▸ Show editor")
+            self.editor_title.pack_forget()
+            self.toggle_btn.config(text="▸ Show editor")
+            self.left.pack_configure(fill="both", expand=True)
         else:
+            self.editor_title.pack(side="left")
             self.editor_outer.pack(fill="both", expand=True, pady=(6, 0))
-            self.toggle_btn.configure(text="▾ Hide editor")
+            self.toggle_btn.config(text="▾ Hide editor")
+            self.left.pack_configure(fill="y", expand=False)
 
+            ids = self.selected_entry_ids
+            entries = [e for e in self.app.pack.entries if e.id in set(ids)]
+            if len(entries) == 1:
+                self._build_editor_for(entries[0])
+            elif len(entries) > 1:
+                self._build_multi_editor_for(entries)
+
+    # -- helpers -------------------------------------------------
+    def _available_biome_values(self, entry: Entry, is_tag: bool):
+        """Biome/biome-tag options not already added to this entry, so the
+        picker doesn't keep offering values that are already selected.
+        Includes both the built-in list and any custom biomes/tags the
+        user has defined for this songpack.
+        """
+        builtins = C.COMMON_BIOME_TAGS if is_tag else C.COMMON_BIOMES
+        custom = self.app.biome_custom_tags if is_tag else self.app.biome_custom_biomes
+        used = {b.value for b in entry.biomes if b.is_tag == is_tag}
+        return [v for v in [*builtins, *custom] if v not in used]
+
+    def _biome_color(self, value: str, is_tag: bool) -> str:
+        custom = self.app.biome_custom_tags if is_tag else self.app.biome_custom_biomes
+        return custom.get(value, biome_customization.default_color(value, is_tag))
+
+    # -- target mod version gating -------------------------------------------
+    def _supports(self, feature: str) -> bool:
+        """Does the songpack's target mod build have this condition? With
+        no target chosen this is always True, so the editor never gets in
+        the way until you've told it what you're building for.
+        """
+        return mod_versions.supports(self.app.effective_mod_version(), feature)
+
+    @staticmethod
+    def _gate_suffix(feature: str) -> str:
+        req = mod_versions.requirement(feature)
+        return f"  (needs RM {req}+)" if req else ""
+
+    def _target_banner(self, parent):
+        """One line at the top of the editor saying what's being targeted,
+        so a greyed-out checkbox is never a mystery.
+        """
+        version = self.app.effective_mod_version()
+        if not version:
+            text = ("No target build set — every documented condition is available. "
+                    "Set a Minecraft version in the Songpack Info tab to have the editor "
+                    "hide conditions your mod build doesn't have.")
+        else:
+            text = (f"Targeting Reactive Music {version}. Conditions added in later versions are "
+                    "disabled below. Ones already set on this entry stay editable so you can "
+                    "remove them.")
+        ttk.Label(parent, text=text, foreground="#666",
+                  justify="left", wraplength=620).pack(anchor="w", padx=8, pady=(8, 2))
+
+    def _build_fixed_categories(self, entry: Entry):
+        """The fixed checkbox groups, with anything the target build
+        predates disabled (unless the entry already uses it).
+        """
+        for cat in C.FIXED_CATEGORY_ORDER:
+            definition = C.FIXED_CATEGORIES[cat]
+            frame = ttk.LabelFrame(
+                self.editor_frame, text=f"{definition['label']}  (checked options = OR)")
+            frame.pack(fill="x", padx=6, pady=4)
+            option_vars = {}
+            for opt in definition["options"]:
+                already_set = opt in entry.selected.get(cat, set())
+                available = self._supports(opt)
+                var = tk.BooleanVar(value=already_set)
+                label = opt if available else opt + self._gate_suffix(opt)
+                check = ttk.Checkbutton(
+                    frame, text=label, variable=var,
+                    command=lambda c=cat: self._on_fixed_changed(entry, c),
+                )
+                if not available and not already_set:
+                    check.state(["disabled"])
+                check.pack(side="left", padx=4, pady=2)
+                option_vars[opt] = var
+            self.category_vars[cat] = option_vars
+
+    # -- editor construction -------------------------------------------------
     def _build_editor_for(self, entry: Entry):
-        for child in self.editor_frame.winfo_children():
-            child.destroy()
+        for w in self.editor_frame.winfo_children():
+            w.destroy()
         self.category_vars = {}
-        self.editor_title.configure(text=f"Editing: {entry.display_name()}")
-        self._build_condition_sections(self.editor_frame, entry)
 
-    def _build_multi_editor_for(self, entries: list[Entry]):
-        for child in self.editor_frame.winfo_children():
-            child.destroy()
-        self.category_vars = {}
-        self.editor_title.configure(text=f"Editing {len(entries)} selected entries")
-        self._build_multi_condition_sections(self.editor_frame, entries)
+        self._target_banner(self.editor_frame)
 
-    def _build_condition_sections(self, parent, entry):
-        pad = {"padx": 8, "pady": 4}
-        ttk.Label(parent, text="Songs", font=("", 10, "bold")).pack(anchor="w", padx=10, pady=(8, 2))
-        song_frame = ttk.Frame(parent)
-        song_frame.pack(fill="x", padx=10)
-        self.song_vars = []
-        for song in entry.songs:
-            var = tk.StringVar(value=song)
-            self.song_vars.append(var)
-            row = ttk.Frame(song_frame)
-            row.pack(fill="x", pady=2)
-            ttk.Entry(row, textvariable=var).pack(side="left", fill="x", expand=True)
-            ttk.Button(row, text="Remove", command=lambda v=var: self._remove_song(entry, v)).pack(side="right", padx=(4, 0))
-        ttk.Button(song_frame, text="+ Add song", command=lambda: self._add_song(entry)).pack(anchor="w", pady=4)
+        # -- fixed checkbox categories --
+        self._build_fixed_categories(entry)
 
-        self._build_condition_categories(parent, entry)
+        # -- biome --
+        biome_frame = ttk.LabelFrame(self.editor_frame, text="Biome")
+        biome_frame.pack(fill="x", padx=6, pady=4)
 
-        ttk.Separator(parent, orient="horizontal").pack(fill="x", padx=10, pady=8)
-        ttk.Label(parent, text="Entry settings", font=("", 10, "bold")).pack(anchor="w", padx=10, pady=(0, 2))
-        settings = ttk.Frame(parent)
-        settings.pack(fill="x", padx=10)
-        self.fallback_var = tk.BooleanVar(value=entry.allow_fallback)
-        ttk.Checkbutton(settings, text="Allow fallback to lower-priority entries", variable=self.fallback_var,
-                        command=lambda: self._apply_entry_settings(entry)).pack(anchor="w", **pad)
-        self.disabled_var = tk.BooleanVar(value=entry.disabled)
-        ttk.Checkbutton(settings, text="Disabled", variable=self.disabled_var,
-                        command=lambda: self._apply_entry_settings(entry)).pack(anchor="w", **pad)
+        row1 = ttk.Frame(biome_frame)
+        row1.pack(fill="x", padx=4, pady=2)
+        ttk.Label(row1, text="Biome:").pack(side="left")
+        self.biome_search_var = tk.StringVar()
+        self.biome_is_tag_var = tk.BooleanVar(value=False)
+        self.biome_combobox = ttk.Combobox(
+            row1, textvariable=self.biome_search_var,
+            values=self._available_biome_values(entry, False), width=24,
+        )
+        self.biome_combobox.pack(side="left", padx=4)
 
-    def _build_condition_categories(self, parent, entry):
-        # Build the category checkboxes used by the existing condition model.
-        self.category_vars = {}
-        for category, options in condition_logic.condition_options(self.app, entry):
-            lf = ttk.LabelFrame(parent, text=category)
-            lf.pack(fill="x", padx=10, pady=5)
-            vars_for_cat = {}
-            for option, enabled in options:
-                var = tk.BooleanVar(value=enabled)
-                vars_for_cat[option] = var
-                ttk.Checkbutton(
-                    lf, text=option, variable=var,
-                    command=lambda c=category, o=option: self._condition_toggled(entry, c, o),
-                ).pack(anchor="w", padx=8, pady=2)
-            self.category_vars[category] = vars_for_cat
+        def _on_biome_tag_toggle():
+            self.biome_combobox.configure(
+                values=self._available_biome_values(
+                    entry, self.biome_is_tag_var.get())
+            )
 
-    def _build_multi_condition_sections(self, parent, entries):
+        tag_available = self._supports("BIOMETAG")
+        tag_check = ttk.Checkbutton(
+            row1,
+            text="Use as BIOMETAG (broader match)" if tag_available
+            else "Use as BIOMETAG (broader match)" + self._gate_suffix("BIOMETAG"),
+            variable=self.biome_is_tag_var, command=_on_biome_tag_toggle,
+        )
+        if not tag_available:
+            self.biome_is_tag_var.set(False)
+            tag_check.state(["disabled"])
+        tag_check.pack(side="left", padx=8)
+        ttk.Button(row1, text="Add", command=lambda: self._add_biome(
+            entry)).pack(side="left", padx=4)
+        ttk.Button(row1, text="Add custom…", command=lambda: self._open_custom_biome_dialog(
+            entry)).pack(side="left", padx=4)
+
+        row2 = ttk.Frame(biome_frame)
+        row2.pack(fill="x", padx=4)
+        ttk.Label(row2, text="Combine multiple biomes with:").pack(side="left")
+        self.biome_combine_var = tk.StringVar(value=entry.biome_combine)
+        for mode in (C.COMBINE_OR, C.COMBINE_AND):
+            ttk.Radiobutton(
+                row2, text=mode, value=mode, variable=self.biome_combine_var,
+                command=lambda: self._set_combine(
+                    entry, "biome_combine", self.biome_combine_var.get()),
+            ).pack(side="left", padx=4)
+
+        self.biome_listbox = tk.Listbox(
+            biome_frame, height=min(4, max(2, len(entry.biomes))))
+        self.biome_listbox.pack(fill="x", padx=4, pady=4)
+        for index, b in enumerate(entry.biomes):
+            self.biome_listbox.insert(
+                "end", ("[TAG] " if b.is_tag else "") + b.value)
+            self.biome_listbox.itemconfig(
+                index, foreground=self._biome_color(b.value, b.is_tag))
+        ttk.Button(biome_frame, text="Remove selected", command=lambda: self._remove_biome(entry)).pack(
+            anchor="w", padx=4, pady=(0, 4)
+        )
+
+        # -- dimension --
+        dim_frame = ttk.LabelFrame(self.editor_frame, text="Dimension")
+        dim_frame.pack(fill="x", padx=6, pady=4)
+
+        drow1 = ttk.Frame(dim_frame)
+        drow1.pack(fill="x", padx=4, pady=2)
+        ttk.Label(drow1, text="Dimension:").pack(side="left")
+        self.dim_search_var = tk.StringVar()
+        self.dim_combobox = ttk.Combobox(
+            drow1, textvariable=self.dim_search_var, values=C.COMMON_DIMENSIONS, width=24)
+        self.dim_combobox.pack(side="left", padx=4)
+        ttk.Button(drow1, text="Add", command=lambda: self._add_dimension(
+            entry)).pack(side="left", padx=4)
+
+        drow2 = ttk.Frame(dim_frame)
+        drow2.pack(fill="x", padx=4)
+        ttk.Label(drow2, text="Combine multiple dimensions with:").pack(
+            side="left")
+        self.dim_combine_var = tk.StringVar(value=entry.dimension_combine)
+        for mode in (C.COMBINE_OR, C.COMBINE_AND):
+            ttk.Radiobutton(
+                drow2, text=mode, value=mode, variable=self.dim_combine_var,
+                command=lambda: self._set_combine(
+                    entry, "dimension_combine", self.dim_combine_var.get()),
+            ).pack(side="left", padx=4)
+
+        self.dim_listbox = tk.Listbox(
+            dim_frame, height=min(4, max(2, len(entry.dimensions))))
+        self.dim_listbox.pack(fill="x", padx=4, pady=4)
+        for d in entry.dimensions:
+            self.dim_listbox.insert("end", d.value)
+        ttk.Button(dim_frame, text="Remove selected", command=lambda: self._remove_dimension(entry)).pack(
+            anchor="w", padx=4, pady=(0, 4)
+        )
+
+        # -- block --
+        block_frame = ttk.LabelFrame(
+            self.editor_frame, text="Nearby Blocks (25-block radius)")
+        block_frame.pack(fill="x", padx=6, pady=4)
+
+        # BLOCK= only exists from 1.2.0 onward. If the target build is older
+        # and the entry doesn't already use it, the whole section collapses
+        # to an explanation instead of being silently broken.
+        block_available = self._supports("BLOCK") or bool(entry.blocks)
+        if not block_available:
+            ttk.Label(
+                block_frame,
+                text=("Nearby-block detection was added in Reactive Music "
+                      f"{mod_versions.requirement('BLOCK')}. Raise the target build in the "
+                      "Songpack Info tab to use it."),
+                foreground="#666", justify="left", wraplength=560,
+            ).pack(anchor="w", padx=6, pady=6)
+            block_body = ttk.Frame(self.editor_frame)  # built but never packed
+        else:
+            block_body = block_frame
+            if not self._supports("BLOCK"):
+                ttk.Label(
+                    block_frame,
+                    text=(f"{self.WARNING_PREFIX}This entry already uses BLOCK=, which the target "
+                          f"build predates (needs {mod_versions.requirement('BLOCK')}+). It is kept "
+                          "editable so you can remove it."),
+                    foreground="#b45309", justify="left", wraplength=560,
+                ).pack(anchor="w", padx=6, pady=(4, 0))
+
+        brow1 = ttk.Frame(block_body)
+        brow1.pack(fill="x", padx=4, pady=2)
+        ttk.Label(brow1, text="Block:").pack(side="left")
+        self.block_search_var = tk.StringVar()
+        self.block_combobox = ttk.Combobox(
+            brow1, textvariable=self.block_search_var, values=block_data.COMMON_BLOCK_IDS, width=24
+        )
+        self.block_combobox.pack(side="left", padx=4)
+        self.block_search_var.trace_add(
+            "write", lambda *_: self._filter_block_options())
+        ttk.Label(brow1, text="Min count:").pack(side="left", padx=(10, 0))
+        self.block_count_var = tk.IntVar(value=1)
+        ttk.Spinbox(brow1, from_=1, to=10000, textvariable=self.block_count_var, width=7).pack(
+            side="left", padx=4)
+        ttk.Button(brow1, text="Add", command=lambda: self._add_block(
+            entry)).pack(side="left", padx=4)
         ttk.Label(
-            parent,
-            text="Changes below are applied to all selected entries.",
-            font=("", 10, "bold"),
-        ).pack(anchor="w", padx=10, pady=(8, 6))
-        for category, options in condition_logic.condition_options_multi(self.app, entries):
-            lf = ttk.LabelFrame(parent, text=category)
-            lf.pack(fill="x", padx=10, pady=5)
-            for option, state in options:
-                if state == "mixed":
-                    text = f"{option} (mixed)"
-                    value = False
-                else:
-                    text = option
-                    value = bool(state)
-                var = tk.BooleanVar(value=value)
-                ttk.Checkbutton(
-                    lf, text=text, variable=var,
-                    command=lambda c=category, o=option, v=var: self._multi_condition_toggled(entries, c, o, v),
-                ).pack(anchor="w", padx=8, pady=2)
+            block_body, text="Tip: use /reactivemusic logBlockCounter in-game to see real counts.",
+            foreground="#666",
+        ).pack(anchor="w", padx=4)
 
-    def _condition_toggled(self, entry, category, option):
-        var = self.category_vars[category][option]
-        condition_logic.set_condition(self.app, entry, category, option, bool(var.get()))
-        self.app.on_entry_conditions_changed(entry)
+        brow2 = ttk.Frame(block_body)
+        brow2.pack(fill="x", padx=4)
+        ttk.Label(brow2, text="Combine multiple blocks with:").pack(side="left")
+        self.block_combine_var = tk.StringVar(value=entry.block_combine)
+        for mode in (C.COMBINE_AND, C.COMBINE_OR):
+            ttk.Radiobutton(
+                brow2, text=mode, value=mode, variable=self.block_combine_var,
+                command=lambda: self._set_combine(
+                    entry, "block_combine", self.block_combine_var.get()),
+            ).pack(side="left", padx=4)
 
-    def _multi_condition_toggled(self, entries, category, option, var):
-        condition_logic.set_condition_multi(self.app, entries, category, option, bool(var.get()))
-        self.app.refresh_all()
+        self.block_listbox = tk.Listbox(
+            block_body, height=min(4, max(2, len(entry.blocks))))
+        self.block_listbox.pack(fill="x", padx=4, pady=4)
+        for b in entry.blocks:
+            self.block_listbox.insert(
+                "end", f"{b.block_id}  (min {b.min_count})")
+        ttk.Button(block_body, text="Remove selected", command=lambda: self._remove_block(entry)).pack(
+            anchor="w", padx=4, pady=(0, 4)
+        )
 
-    def _apply_entry_settings(self, entry):
-        entry.allow_fallback = bool(self.fallback_var.get())
-        entry.disabled = bool(self.disabled_var.get())
-        self.app.on_entry_conditions_changed(entry)
+        # -- advanced / fallback behaviour --
+        adv_frame = ttk.LabelFrame(
+            self.editor_frame, text="Advanced / Fallback Behaviour")
+        adv_frame.pack(fill="x", padx=6, pady=4)
 
-    def _add_song(self, entry):
-        entry.songs.append("new_song.mp3")
-        self._build_editor_for(entry)
-        self.app.on_entry_conditions_changed(entry)
+        self.allow_fallback_var = tk.BooleanVar(value=entry.allow_fallback)
+        fallback_available = self._supports("allow_fallback")
+        fallback_check = ttk.Checkbutton(
+            adv_frame,
+            text="allowFallback — once this entry's own song(s) are exhausted, let a broader\n"
+                 "entry play instead of repeating (recommended ON, especially for rare/narrow entries)"
+                 + ("" if fallback_available else self._gate_suffix("allow_fallback")),
+            variable=self.allow_fallback_var,
+            command=lambda: self._on_advanced_changed(entry),
+        )
+        if not fallback_available and not entry.allow_fallback:
+            fallback_check.state(["disabled"])
+        fallback_check.pack(anchor="w", padx=4, pady=2)
 
-    def _remove_song(self, entry, var):
-        song = var.get()
-        if len(entry.songs) <= 1:
+        self.force_stop_changed_var = tk.BooleanVar(
+            value=entry.force_stop_on_changed)
+        ttk.Checkbutton(
+            adv_frame, text="forceStopMusicOnChanged (stop current music whenever this event's validity flips)",
+            variable=self.force_stop_changed_var, command=lambda: self._on_advanced_changed(
+                entry),
+        ).pack(anchor="w", padx=4, pady=1)
+
+        self.force_stop_valid_var = tk.BooleanVar(
+            value=entry.force_stop_on_valid)
+        ttk.Checkbutton(
+            adv_frame, text="forceStopMusicOnValid (stop current music when this event becomes valid)",
+            variable=self.force_stop_valid_var, command=lambda: self._on_advanced_changed(
+                entry),
+        ).pack(anchor="w", padx=4, pady=1)
+
+        self.force_stop_invalid_var = tk.BooleanVar(
+            value=entry.force_stop_on_invalid)
+        ttk.Checkbutton(
+            adv_frame, text="forceStopMusicOnInvalid (stop current music when this event becomes invalid)",
+            variable=self.force_stop_invalid_var, command=lambda: self._on_advanced_changed(
+                entry),
+        ).pack(anchor="w", padx=4, pady=1)
+
+        self.force_start_var = tk.BooleanVar(value=entry.force_start_on_valid)
+        ttk.Checkbutton(
+            adv_frame, text="forceStartMusicOnValid (immediately start this entry once valid, if music stopped)",
+            variable=self.force_start_var, command=lambda: self._on_advanced_changed(
+                entry),
+        ).pack(anchor="w", padx=4, pady=1)
+
+        chance_row = ttk.Frame(adv_frame)
+        chance_row.pack(fill="x", padx=4, pady=(4, 6))
+        ttk.Label(chance_row, text="forceChance:").pack(side="left")
+        self.force_chance_var = tk.DoubleVar(value=entry.force_chance)
+        ttk.Scale(
+            chance_row, from_=0.0, to=1.0, variable=self.force_chance_var, orient="horizontal", length=180,
+            command=lambda _v: self._on_advanced_changed(entry),
+        ).pack(side="left", padx=4)
+        self.force_chance_label = ttk.Label(
+            chance_row, text=f"{entry.force_chance:.2f}")
+        self.force_chance_label.pack(side="left")
+
+        # -- custom / unrecognised raw conditions --
+        custom_frame = ttk.LabelFrame(
+            self.editor_frame, text="Custom / unrecognised raw conditions (one per line)")
+        custom_frame.pack(fill="x", padx=6, pady=4)
+        self.custom_text = tk.Text(custom_frame, height=3)
+        self.custom_text.insert("1.0", "\n".join(entry.custom_raw_conditions))
+        self.custom_text.pack(fill="x", padx=4, pady=4)
+        self.custom_text.bind(
+            "<FocusOut>", lambda _e: self._on_custom_changed(entry))
+        ttk.Label(
+            custom_frame,
+            text="Conditions loaded from an existing file that this editor's checkboxes\n"
+                 "couldn't fully represent land here verbatim instead of being lost.",
+            foreground="#666",
+        ).pack(anchor="w", padx=4, pady=(0, 4))
+
+        # -- priority / variety helper --
+        info_frame = ttk.LabelFrame(
+            self.editor_frame, text="Priority & Variety")
+        info_frame.pack(fill="x", padx=6, pady=(4, 12))
+        self.score_label = ttk.Label(
+            info_frame,
+            text=f"Rarity score: {priority.score_entry(entry)}   "
+            f"(higher = more specific = plays before broader/common entries)",
+        )
+        self.score_label.pack(anchor="w", padx=4, pady=2)
+
+        if not entry.has_any_condition():
+            ttk.Label(
+                info_frame,
+                text=f"{self.WARNING_PREFIX}This entry has no conditions set, so it always matches -- "
+                "it will play whenever nothing higher in the priority list is valid.",
+                foreground="#b45309",
+            ).pack(anchor="w", padx=4, pady=(0, 6))
+
+        fallbacks = priority.find_broader_fallbacks(
+            entry, self.app.pack.entries)
+        if fallbacks:
+            ttk.Label(
+                info_frame,
+                text="These broader entries would also be valid whenever this one is. Mixing one\n"
+                     "of their songs directly into this entry's own rotation lets it play here too,\n"
+                     "right away, instead of waiting for this entry's songs to fully exhaust first\n"
+                     "(so this song doesn't loop as annoyingly in rare situations):",
+                justify="left",
+            ).pack(anchor="w", padx=4, pady=(2, 4))
+            for fb in fallbacks:
+                row = ttk.Frame(info_frame)
+                row.pack(fill="x", padx=12, pady=1)
+                ttk.Label(row, text=f"{fb.display_name()}  —  {condition_logic.summarize_entry(fb, 40)}").pack(
+                    side="left"
+                )
+                ttk.Button(
+                    row, text="Mix into this entry", command=lambda fb=fb: self._mix_in_fallback(entry, fb)
+                ).pack(side="right")
+        else:
+            ttk.Label(info_frame, text="No broader entries currently detected to mix in.", foreground="#666").pack(
+                anchor="w", padx=4
+            )
+
+    # -- change handlers -------------------------------------------------
+    def _on_fixed_changed(self, entry: Entry, cat: str):
+        chosen = {opt for opt,
+                  var in self.category_vars[cat].items() if var.get()}
+        entry.selected[cat] = chosen
+        self._refresh_after_change(entry, rebuild=False)
+
+    def _on_advanced_changed(self, entry: Entry):
+        entry.allow_fallback = self.allow_fallback_var.get()
+        entry.force_stop_on_changed = self.force_stop_changed_var.get()
+        entry.force_stop_on_valid = self.force_stop_valid_var.get()
+        entry.force_stop_on_invalid = self.force_stop_invalid_var.get()
+        entry.force_start_on_valid = self.force_start_var.get()
+        entry.force_chance = round(self.force_chance_var.get(), 2)
+        self.force_chance_label.config(text=f"{entry.force_chance:.2f}")
+        self._refresh_after_change(entry, rebuild=False)
+
+    def _on_custom_changed(self, entry: Entry):
+        text = self.custom_text.get("1.0", "end").strip()
+        entry.custom_raw_conditions = [
+            line.strip() for line in text.splitlines() if line.strip()]
+        self._refresh_after_change(entry, rebuild=False)
+
+    def _set_combine(self, entry: Entry, attr: str, value: str):
+        setattr(entry, attr, value)
+        self._refresh_after_change(entry, rebuild=False)
+
+    def _filter_block_options(self):
+        text = self.block_search_var.get().strip().lower()
+        if text:
+            filtered = [
+                b for b in block_data.COMMON_BLOCK_IDS if text in b.lower()]
+        else:
+            filtered = block_data.COMMON_BLOCK_IDS
+        self.block_combobox["values"] = filtered[:50]
+
+    def _add_biome(self, entry: Entry):
+        value = self.biome_search_var.get().strip()
+        if not value:
             return
-        entry.songs = [s for s in entry.songs if s != song]
-        self._build_editor_for(entry)
+        entry.biomes.append(BiomeCondition(
+            value=value, is_tag=self.biome_is_tag_var.get()))
+        self.biome_search_var.set("")
+        self._refresh_after_change(entry, rebuild=True)
+
+    def _remove_biome(self, entry: Entry):
+        sel = self.biome_listbox.curselection()
+        if not sel:
+            return
+        del entry.biomes[sel[0]]
+        self._refresh_after_change(entry, rebuild=True)
+
+    def _open_custom_biome_dialog(self, entry: Entry):
+        """Define a brand-new custom biome or biome tag (with its own text
+        color) so it becomes available in the picker above. This does NOT
+        add a condition to the entry by itself -- use "Add" for that once
+        the new value is defined.
+        """
+        window = tk.Toplevel(self)
+        window.title("Add Custom Biome / Biome Tag")
+        window.resizable(False, False)
+        window.transient(self)
+        window.grab_set()
+
+        body = ttk.Frame(window)
+        body.pack(padx=14, pady=14)
+        name_var = tk.StringVar()
+        type_var = tk.StringVar(value="Biome")
+        color_var = tk.StringVar(
+            value=biome_customization.default_color("custom"))
+
+        ttk.Label(body, text="Name / identifier:").grid(
+            row=0, column=0, padx=6, pady=5)
+        ttk.Entry(body, textvariable=name_var, width=34).grid(
+            row=0, column=1, columnspan=2, padx=2, pady=5)
+        ttk.Label(body, text="Type:").grid(row=1, column=0, padx=6, pady=5)
+        ttk.Combobox(
+            body, textvariable=type_var, values=("Biome", "Biome Tag"),
+            state="readonly", width=14,
+        ).grid(row=1, column=1, padx=2, pady=5, sticky="w")
+        ttk.Label(body, text="Text color:").grid(
+            row=2, column=0, padx=6, pady=5)
+        swatch = tk.Label(body, text="        ",
+                          bg=color_var.get(), relief="sunken")
+        swatch.grid(row=2, column=1, padx=2, pady=5, sticky="w")
+
+        def pick():
+            result = colorchooser.askcolor(
+                color=color_var.get(), parent=window, title="Biome text color")
+            if result[1]:
+                color = result[1].lower()
+                color_var.set(color)
+                swatch.configure(bg=color)
+
+        ttk.Button(body, text="Choose…", command=pick).grid(
+            row=2, column=2, padx=4, pady=5)
+
+        def add():
+            name = name_var.get().strip()
+            is_tag = type_var.get() == "Biome Tag"
+            color = color_var.get().strip().lower()
+            builtins = C.COMMON_BIOME_TAGS if is_tag else C.COMMON_BIOMES
+            custom = self.app.biome_custom_tags if is_tag else self.app.biome_custom_biomes
+            if not name:
+                messagebox.showwarning(
+                    "Custom biome", "Enter a name.", parent=window)
+                return
+            if name in builtins or name in custom:
+                messagebox.showwarning(
+                    "Custom biome", "That name already exists.", parent=window)
+                return
+            if not biome_customization.valid_color(color):
+                messagebox.showwarning(
+                    "Custom biome", "Choose a valid text color.", parent=window)
+                return
+            custom[name] = color
+            window.destroy()
+            self._build_editor_for(entry)
+            self.app.set_status(
+                f"Added custom {'biome tag' if is_tag else 'biome'} '{name}'. "
+                "Save the songpack to keep this definition."
+            )
+
+        ttk.Button(body, text="Cancel", command=window.destroy).grid(
+            row=3, column=1, padx=4, pady=(8, 0), sticky="e")
+        ttk.Button(body, text="Add", command=add).grid(
+            row=3, column=2, padx=4, pady=(8, 0), sticky="e")
+        window.bind("<Return>", lambda _e: add())
+        window.bind("<Escape>", lambda _e: window.destroy())
+
+    def _add_dimension(self, entry: Entry):
+        value = self.dim_search_var.get().strip()
+        if not value:
+            return
+        entry.dimensions.append(DimensionCondition(value=value))
+        self.dim_search_var.set("")
+        self._refresh_after_change(entry, rebuild=True)
+
+    def _remove_dimension(self, entry: Entry):
+        sel = self.dim_listbox.curselection()
+        if not sel:
+            return
+        del entry.dimensions[sel[0]]
+        self._refresh_after_change(entry, rebuild=True)
+
+    def _add_block(self, entry: Entry):
+        value = self.block_search_var.get().strip()
+        if not value:
+            return
+        try:
+            count = max(1, int(self.block_count_var.get()))
+        except (tk.TclError, ValueError):
+            count = 1
+        entry.blocks.append(BlockCondition(block_id=value, min_count=count))
+        self.block_search_var.set("")
+        self._refresh_after_change(entry, rebuild=True)
+
+    def _remove_block(self, entry: Entry):
+        sel = self.block_listbox.curselection()
+        if not sel:
+            return
+        del entry.blocks[sel[0]]
+        self._refresh_after_change(entry, rebuild=True)
+
+    def _mix_in_fallback(self, target_entry: Entry, source_entry: Entry):
+        added = [s for s in source_entry.songs if s and s not in target_entry.songs]
+        if not added:
+            messagebox.showinfo(
+                "Nothing to mix in", "That entry's song(s) are already part of this rotation.")
+            return
+        target_entry.songs.extend(added)
+        target_entry.allow_fallback = True
+        self._refresh_after_change(target_entry, rebuild=True)
+        self.app.set_status(
+            f"Mixed {', '.join(added)} into '{target_entry.songs[0]}' so it can play there too."
+        )
+
+    def _refresh_after_change(self, entry: Entry, rebuild: bool):
+        if rebuild:
+            self._build_editor_for(entry)
+        else:
+            self.score_label.config(
+                text=f"Rarity score: {priority.score_entry(entry)}   "
+                f"(higher = more specific = plays before broader/common entries)"
+            )
         self.app.on_entry_conditions_changed(entry)
 
 
 # ---------------------------------------------------------------------------
-# Tab 3: Priority Order
+# Tab 3: Priority Order (drag & drop)
 # ---------------------------------------------------------------------------
 class PriorityTab(ttk.Frame):
     def __init__(self, parent, app: "App"):
         super().__init__(parent)
         self.app = app
         self._drag_start_iid = None
-        self.tree = ttk.Treeview(
-            self, columns=("song", "score"), show="headings", height=24)
-        self.tree.heading("song", text="Entry")
-        self.tree.heading("score", text="Rarity")
-        self.tree.column("song", width=500, anchor="w")
-        self.tree.column("score", width=100, anchor="center")
-        self.tree.pack(fill="both", expand=True, padx=10, pady=(10, 4))
-        self.tree.bind("<ButtonPress-1>", self._drag_start)
-        self.tree.bind("<ButtonRelease-1>", self._drag_end)
 
-        controls = ttk.Frame(self)
-        controls.pack(fill="x", padx=10, pady=(0, 10))
-        ttk.Button(controls, text="Auto-arrange by rarity", command=self.auto_arrange).pack(side="left")
-        ttk.Label(controls, text="Drag entries to reorder them manually.", foreground="#666").pack(side="left", padx=10)
+        top = ttk.Frame(self)
+        top.pack(fill="x", padx=8, pady=8)
+        ttk.Label(
+            top,
+            text="Drag rows to reorder. The mod plays the first entry (top of this list) whose "
+                 "conditions are currently true, so more specific/rare entries should sit above "
+                 "broader, more common ones.",
+            wraplength=680, justify="left",
+        ).pack(side="left", fill="x", expand=True)
+
+        btns = ttk.Frame(self)
+        btns.pack(fill="x", padx=8)
+        ttk.Button(btns, text="Auto-arrange by rarity (recommended)", command=self._auto_arrange).pack(
+            side="left", padx=2
+        )
+        ttk.Button(btns, text="Move Up",
+                   command=lambda: self._nudge(-1)).pack(side="left", padx=2)
+        ttk.Button(btns, text="Move Down", command=lambda: self._nudge(1)).pack(
+            side="left", padx=2)
+
+        columns = ("idx", "song", "score", "summary", "fallback")
+        self.tree = ttk.Treeview(
+            self, columns=columns, show="headings", selectmode="browse", height=24)
+        headers = {"idx": "#", "song": "Song", "score": "Rarity",
+                   "summary": "Conditions", "fallback": "Fallback"}
+        widths = {"idx": 35, "song": 190, "score": 60,
+                  "summary": 320, "fallback": 70}
+        anchors = {"idx": "center", "song": "w", "score": "center",
+                   "summary": "w", "fallback": "center"}
+        for c in columns:
+            self.tree.heading(c, text=headers[c])
+            self.tree.column(c, width=widths[c], anchor=anchors[c])
+        self.tree.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+
+        self.tree.bind("<ButtonPress-1>", self._on_press)
+        self.tree.bind("<B1-Motion>", self._on_motion)
+        self.tree.bind("<ButtonRelease-1>", self._on_release)
 
     def refresh(self):
+        selected = self.tree.selection()
         self.tree.delete(*self.tree.get_children())
-        for entry in self.app.pack.entries:
-            self.tree.insert("", "end", iid=entry.id,
-                             values=(entry.display_name(), priority.score_entry(entry)))
+        for i, entry in enumerate(self.app.pack.entries, start=1):
+            name = entry.display_name()
+            if not entry.has_any_condition():
+                name = LibraryTab.WARNING_PREFIX + name
+            self.tree.insert(
+                "", "end", iid=entry.id,
+                values=(
+                    i, name, priority.score_entry(entry),
+                    condition_logic.summarize_entry(entry),
+                    "yes" if entry.allow_fallback else "no",
+                ),
+            )
+        if selected and self.tree.exists(selected[0]):
+            self.tree.selection_set(selected[0])
 
-    def auto_arrange(self):
-        self.app.pack.entries.sort(key=priority.score_entry, reverse=True)
+    def _auto_arrange(self):
+        self.app.pack.entries = priority.auto_priority_order(
+            self.app.pack.entries)
         self.refresh()
-        self.app.set_status("Entries arranged from highest to lowest rarity.")
+        self.app.library_tab.refresh_tree(keep_selection=True)
+        self.app.set_status(
+            "Priority order recomputed: rarest/most-specific entries now sit at the top.")
 
-    def _drag_start(self, event):
+    def _nudge(self, direction: int):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        iid = sel[0]
+        entries = self.app.pack.entries
+        idx = next((i for i, e in enumerate(entries) if e.id == iid), None)
+        if idx is None:
+            return
+        new_idx = idx + direction
+        if 0 <= new_idx < len(entries):
+            entries[idx], entries[new_idx] = entries[new_idx], entries[idx]
+            self.refresh()
+            self.tree.selection_set(iid)
+            self.tree.see(iid)
+
+    def _on_press(self, event):
         self._drag_start_iid = self.tree.identify_row(event.y)
 
-    def _drag_end(self, event):
+    def _on_motion(self, event):
         if not self._drag_start_iid:
             return
         target = self.tree.identify_row(event.y)
         if target and target != self._drag_start_iid:
-            order = list(self.tree.get_children(""))
-            order.remove(self._drag_start_iid)
-            index = order.index(target)
-            order.insert(index, self._drag_start_iid)
-            id_to_entry = {e.id: e for e in self.app.pack.entries}
-            self.app.pack.entries = [id_to_entry[i] for i in order if i in id_to_entry]
-            self.refresh()
+            self.tree.move(self._drag_start_iid, "", self.tree.index(target))
+
+    def _on_release(self, _event):
+        if self._drag_start_iid:
+            self._sync_order_from_tree()
         self._drag_start_iid = None
+
+    def _sync_order_from_tree(self):
+        order_ids = self.tree.get_children("")
+        id_to_entry = {e.id: e for e in self.app.pack.entries}
+        self.app.pack.entries = [id_to_entry[i]
+                                 for i in order_ids if i in id_to_entry]
+        self.refresh()
 
 
 # ---------------------------------------------------------------------------
 # Main application window
 # ---------------------------------------------------------------------------
-class App(ctk.CTk):
+class App(tk.Tk):
     def __init__(self):
-        ctk.set_default_color_theme("blue")
-        self.settings = app_settings.load()
-        ctk.set_appearance_mode(
-            "dark" if self.settings.get("dark_theme", True) else "light")
         super().__init__()
         self.title("ReactiveMusic Songpack Editor")
         self.geometry("1080x700")
@@ -601,8 +1255,10 @@ class App(ctk.CTk):
         self.biome_custom_biomes = {}
         self.biome_custom_tags = {}
 
-        # Editor-wide preferences are loaded before the tabs are built so
-        # SettingsTab reads the persisted values on construction.
+        # Editor-wide preferences (theme, preview behaviour). Loaded before
+        # the tabs are built because SettingsTab reads them on construction.
+        self.settings = app_settings.load()
+
         self.status_var = tk.StringVar(
             value="Ready. Start with File > New Songpack, Load Config…, or Load Music Folder…"
         )
@@ -689,9 +1345,9 @@ class App(ctk.CTk):
 
     # -- settings -------------------------------------------------
     def apply_theme(self):
-        """Apply the current persisted light/dark preference via CustomTkinter."""
-        ctk.set_appearance_mode(
-            "dark" if self.settings.get("dark_theme", True) else "light")
+        """(Re-)apply the light/dark palette from the current settings."""
+        app_settings.apply_theme(
+            self, bool(self.settings.get("dark_theme", True)))
 
     def save_settings(self):
         try:
