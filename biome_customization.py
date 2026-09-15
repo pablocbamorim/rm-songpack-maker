@@ -171,16 +171,24 @@ def install(app) -> None:
     original_build = library._build_editor_for
 
     def build(self, entry):
+        # Keep the original editor construction, but make the customization
+        # injection independent of widget type/name lookups.
         self._available_biome_values = MethodType(available, self)
         original_build(entry)
-        biome_frame = next((w for w in self.editor_frame.winfo_children()
-                            if isinstance(w, ttk.LabelFrame) and w.cget("text") == "Biome"), None)
-        if biome_frame is not None:
-            if not any(isinstance(w, ttk.Button) and w.cget("text") == "Add custom…"
-                       for w in biome_frame.winfo_children()):
-                ttk.Button(biome_frame, text="Add custom…", command=add_custom_dialog).pack(
-                    anchor="w", padx=4, pady=(0, 4))
-        recolor_listbox()
+
+        combobox = getattr(self, "biome_combobox", None)
+        if combobox is not None:
+            row1 = combobox.master
+            biome_frame = row1.master
+            add_button = ttk.Button(
+                row1, text="Add custom…", command=add_custom_dialog)
+            add_button.pack(side="left", padx=4)
+
+            # Recolor immediately after the original editor has populated the
+            # Listbox. This is deliberately done after every rebuild.
+            recolor_listbox()
+        else:
+            recolor_listbox()
 
     library._build_editor_for = MethodType(build, library)
 
