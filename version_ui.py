@@ -1,7 +1,7 @@
 """Small UI-only version indicator for the Songpack Maker build."""
 from __future__ import annotations
 
-BUILD_VERSION = "v0.1.2"
+BUILD_VERSION = "v0.1.3"
 
 
 def install(app):
