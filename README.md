@@ -34,6 +34,14 @@ The editor currently provides:
 
 The priority score is an editor-side heuristic. It is not a ReactiveMusic setting and does not change the mod's own song-selection algorithm.
 
+## Credits and development note
+
+Created by **Pablo Castelo Branco Amorim** (`pablocbamorim`).
+
+This program was **vibe-coded**: AI tools were used extensively to generate, modify, and debug the code, with the creator directing the development and reviewing the resulting changes.
+
+ReactiveMusic itself is developed by **CircuitLord**. This project is an independent editor for ReactiveMusic songpacks and is not affiliated with the upstream project.
+
 ## Windows installation
 
 The repository builds a standalone Windows executable with GitHub Actions. There is currently no traditional installer: `SoundpackMaker.exe` is a portable executable.
@@ -257,8 +265,10 @@ For the full ReactiveMusic songpack format, see the official [Making Songpacks d
 
 The editor build currently uses a four-part version number in the form `0.x.y.z` and displays it in the Help menu. The repository follows the project's versioning convention: `z` is used for smaller fixes/iterations, `y` for a successfully completed larger feature, and `x` for a bundle of larger features.
 
-Current editor build: `0.1.4.2`.
+Current editor build: `0.1.4.3`.
 
 ## License and upstream project
 
-This tool is an independent editor for the ReactiveMusic songpack format. ReactiveMusic itself is developed by CircuitLord. Refer to the respective repositories for their licensing and distribution terms.
+This tool is licensed under the **MIT License**. See [LICENSE](LICENSE) for the full license text.
+
+ReactiveMusic itself is developed by CircuitLord. Refer to the respective repositories for their licensing and distribution terms.
