@@ -4,11 +4,15 @@
   <img src="assets/SoundpackMaker512.png" alt="Soundpack Maker">
 </p>
 
+<p align="center">
+  <a href="https://github.com/pablocbamorim/rm-songpack-maker/releases/tag/v0.1.5.0-alpha"><strong>Download for Windows</strong></a>
+  &nbsp;|&nbsp;
+  <a href="https://github.com/pablocbamorim/rm-songpack-maker/releases"><strong>View Releases</strong></a>
+</p>
+
 A desktop editor for creating and maintaining songpacks for the [ReactiveMusic](https://github.com/CircuitLord/ReactiveMusic) Minecraft mod.
 
-ReactiveMusic songpacks are folders containing a `ReactiveMusic.yaml` configuration file and a `music` folder with the audio files referenced by that configuration. The mod loads songpacks from Minecraft's `resourcepacks` folder, even though songpacks are not conventional resource packs; this is simply how the mod makes them available through its configuration UI.
-
-This program provides a graphical interface for building that YAML instead of editing the configuration by hand. It can scan a music folder, create song entries, configure event conditions, manage priority, and preserve conditions that the GUI does not recognize.
+ReactiveMusic songpacks contain a `ReactiveMusic.yaml` configuration file and a `music` folder with the audio files referenced by that configuration. This program provides a graphical interface for building that YAML instead of editing it by hand.
 
 ## What it does
 
@@ -19,74 +23,58 @@ This program provides a graphical interface for building that YAML instead of ed
 The editor currently provides:
 
 - Songpack metadata editing: name, version, author, description, credits, music switch speed, and music delay length.
-- Music-folder scanning for `.mp3`, `.ogg`, and `.wav` files. The editor uses the filename without its extension as the song identifier.
+- Music-folder scanning for `.mp3`, `.ogg`, and `.wav` files.
 - Condition editing for ReactiveMusic's fixed event categories: special events, time, weather, world height, entities, actions, location, and combat.
-- Biome conditions, including `BIOME=` and `BIOMETAG=` conditions, with OR/AND combination controls.
-- Custom biome and biome-tag definitions with custom display colors, saved as `biome_customization.json` alongside the songpack.
-- Dimension conditions using `DIM=`.
-- Nearby-block conditions using `BLOCK=` and a minimum block count within ReactiveMusic's 25-block detection radius.
-- Advanced entry behavior such as `allowFallback`, `forceStopMusicOnChanged`, `forceStopMusicOnValid`, `forceStopMusicOnInvalid`, `forceStartMusicOnValid`, and `forceChance`.
-- A text area for custom or unrecognized raw conditions. Existing YAML conditions that cannot be represented by the structured editor are preserved rather than silently discarded.
-- Automatic rarity/specificity scoring and a recommended priority order. More specific conditions are placed before broader conditions because ReactiveMusic evaluates entries from the top of the list and uses the first matching entry.
-- Manual priority reordering by dragging, plus Move Up/Move Down controls.
-- A variety helper that can identify broader entries whose songs could also be mixed into a more specific entry's rotation.
-- Search/filtering of the song entry list and visual warnings for entries with no conditions, since such entries always match.
+- Dynamic conditions including `BIOME=`, `BIOMETAG=`, `DIM=`, and `BLOCK=`.
+- Custom biome and biome-tag definitions with display colors.
+- Advanced entry behavior such as `allowFallback`, force-stop/start options, and `forceChance`.
+- Raw-condition editing for conditions the structured editor does not recognize.
+- Automatic rarity/specificity scoring and recommended priority ordering.
+- Manual priority reordering, search/filtering, and warnings for entries with no conditions.
 
-The priority score is an editor-side heuristic. It is not a ReactiveMusic setting and does not change the mod's own song-selection algorithm.
+The priority score is an editor-side heuristic. ReactiveMusic itself evaluates entries from top to bottom and uses the first matching entry.
 
 ## Windows installation
 
-The repository builds a standalone Windows executable with GitHub Actions. There is currently no traditional installer: `SoundpackMaker.exe` is a portable executable.
+**For normal users, use the download button at the top of this page.**
 
-1. Open the repository's **Actions** page.
-2. Select the **Build Windows executable** workflow.
-3. Open the latest successful workflow run.
-4. Under **Artifacts**, download `SoundpackMaker-Windows`.
-5. Extract the downloaded ZIP.
-6. Run `SoundpackMaker.exe`.
+1. Click **Download for Windows** above, or open the [Releases](https://github.com/pablocbamorim/rm-songpack-maker/releases) page.
+2. Download the Windows `.zip` attached to the latest release.
+3. Extract the ZIP.
+4. Run `SoundpackMaker.exe`.
 
-The workflow uses Python 3.12 to build the executable with PyInstaller. The resulting executable is bundled, so Python does not need to be installed on the machine where you run the Windows build.
+The executable is portable. Python does not need to be installed, and there is currently no traditional installer.
 
-If there is no recent artifact, the workflow can be started manually from the Actions page using **Run workflow**. The workflow also runs automatically whenever `main` is updated.
+GitHub Actions also produces development artifacts, but Releases are the recommended download method for users.
 
 ## Running from source
 
-If you prefer to run the Python version directly, use Python 3.12 or another compatible Python 3 version with Tkinter available.
+Use Python 3.12 or another compatible Python 3 version with Tkinter available.
 
 ```text
 python -m pip install -r requirements.txt
 python main.py
 ```
 
-On Windows, Tkinter is normally included with the standard Python installer. If the program reports that Tkinter is missing, install Python from the official Python distribution with the standard GUI components enabled.
-
 ## Creating a songpack
 
 ### 1. Start a new songpack
 
-Open the program and use **File > New Songpack**.
-
-Alternatively, you can immediately use **Load Music Folder…** and let the editor create blank entries for the audio files it finds.
+Open **File > New Songpack**. Alternatively, use **Load Music Folder…** to create entries automatically from audio files.
 
 ### 2. Fill in Songpack Info
 
-Open the **Songpack Info** tab and set the songpack's metadata.
+In **Songpack Info**, configure the songpack metadata:
 
-The important fields are:
-
-- **Songpack Name** — the name/identifier displayed by ReactiveMusic.
-- **Version** — the version string of your songpack, not the editor's version.
-- **Author**, **Description**, **Credits** — metadata written to the YAML.
+- **Songpack Name** — name/identifier displayed by ReactiveMusic.
+- **Version** — version of your songpack, not the editor.
+- **Author**, **Description**, **Credits** — metadata written to YAML.
 - **Music Switch Speed** — `INSTANT`, `SHORT`, `NORMAL`, or `LONG`.
 - **Music Delay Length** — `NONE`, `SHORT`, `NORMAL`, or `LONG`.
 
-The editor also shows the detected YAML entries root key. Existing files are inspected when loaded; new songpacks use `entries` unless you change it.
-
 ### 3. Load your music
 
-Go to **Music & Conditions** and click **Load Music Folder…**.
-
-Select the folder containing your audio files. The editor scans `.mp3`, `.ogg`, and `.wav` files and creates one entry per new filename stem.
+Go to **Music & Conditions** and click **Load Music Folder…**. The editor scans `.mp3`, `.ogg`, and `.wav` files and uses each filename without its extension as the song identifier.
 
 For example:
 
@@ -97,23 +85,15 @@ music/
 └── Cave.wav
 ```
 
-becomes entries referring to:
+creates entries for `Route 10`, `Battle Theme`, and `Cave`.
 
-```text
-Route 10
-Battle Theme
-Cave
-```
+**Important:** `Save Config…` currently does not copy the audio files. Make sure the referenced files are present in the songpack's `music` folder yourself.
 
-The editor does not currently copy those audio files into the final songpack when you use **Save Config…**. You must make sure the referenced audio files are present in the songpack's `music` folder yourself.
+### 4. Configure conditions
 
-### 4. Configure when each song can play
+Select an entry and configure when it can play. Conditions within a category are OR'd, while different condition categories are represented as separate event requirements and therefore act as AND conditions.
 
-Select an entry on the left. The condition editor on the right is divided into the same categories used by ReactiveMusic.
-
-Fixed conditions are grouped so that checked options within a category are OR'd. For example, checking `RAIN` and `STORM` means either condition can satisfy that category.
-
-Different condition categories are represented as separate YAML event items, which makes them AND conditions. For example:
+For example:
 
 ```yaml
 - events: ["DAY", "BIOME=forest"]
@@ -121,9 +101,9 @@ Different condition categories are represented as separate YAML event items, whi
     - "MySong"
 ```
 
-means the entry requires both daytime and a matching forest biome.
+requires both daytime and a matching forest biome.
 
-The editor also supports the documented dynamic condition types:
+The editor supports:
 
 ```text
 BIOME=...
@@ -132,31 +112,21 @@ DIM=...
 BLOCK=...,count
 ```
 
-Biome names are soft-matched by ReactiveMusic, so a partial biome name can be useful. Biome tags are broader and can provide compatibility across modded biomes when those biomes use the relevant conventional tags.
+It also preserves raw conditions it does not recognize instead of silently discarding them.
 
-### 5. Use the advanced options when necessary
+### 5. Configure advanced behavior
 
-The **Advanced / Fallback Behaviour** section exposes ReactiveMusic's advanced entry properties.
-
-`allowFallback` is particularly useful for rare or one-off events. When enabled, once the entry's own songs have been exhausted, ReactiveMusic can fall through to another valid entry instead of repeatedly selecting the same narrow entry.
-
-The force-stop/start options should be used when a song needs to react immediately to an event becoming valid or invalid. `forceChance` controls the chance of those forced transitions when the relevant force behavior is enabled.
+The **Advanced / Fallback Behaviour** section exposes ReactiveMusic options such as `allowFallback`, `forceStopMusicOnChanged`, `forceStopMusicOnValid`, `forceStopMusicOnInvalid`, `forceStartMusicOnValid`, and `forceChance`.
 
 ### 6. Check priority
 
-Open the **Priority Order** tab.
+Open **Priority Order**. ReactiveMusic evaluates entries from top to bottom and plays the first entry whose conditions are valid. Specific entries therefore generally need to be above broad entries that would also match.
 
-ReactiveMusic evaluates songpack entries from top to bottom and plays the first entry whose conditions are currently valid. Because of that, a highly specific entry generally needs to be above a broad entry that would also match the same situation.
-
-Use **Auto-arrange by rarity (recommended)** to sort entries by the editor's specificity score. You can then drag entries manually or use **Move Up** and **Move Down** if the resulting order is not what you want.
-
-Entries with no conditions are highlighted because they always match. These should normally be kept low in the priority list unless that behavior is intentional.
+Use **Auto-arrange by rarity (recommended)**, then adjust the order manually if necessary. Entries with no conditions always match and should normally be kept low in the list unless that is intentional.
 
 ### 7. Save the songpack
 
-Use **File > Save Config…** and choose the folder where the songpack should be stored.
-
-The editor writes:
+Use **File > Save Config…**. The editor writes:
 
 ```text
 Your Songpack/
@@ -164,9 +134,7 @@ Your Songpack/
 └── biome_customization.json
 ```
 
-The second file is editor metadata for custom biome/biome-tag display colors; ReactiveMusic itself does not use it for its event logic.
-
-Create a `music` subfolder and place all referenced audio files there:
+Then create a `music` folder and put the referenced audio files inside it:
 
 ```text
 Your Songpack/
@@ -178,13 +146,11 @@ Your Songpack/
     └── Cave.wav
 ```
 
-If you loaded an existing songpack, the editor will preserve its detected entries root key and supported metadata when saving.
+`biome_customization.json` is editor metadata for custom biome/biome-tag display colors; ReactiveMusic does not use it for its event logic.
 
 ## Installing the finished songpack in Minecraft
 
-ReactiveMusic's songpack documentation places songpacks in Minecraft's `resourcepacks` directory. Despite the directory name, these songpacks are selected through ReactiveMusic rather than behaving like normal resource packs.
-
-A typical layout is:
+ReactiveMusic's songpack documentation places songpacks in Minecraft's `resourcepacks` directory. Despite the directory name, these are selected through ReactiveMusic rather than behaving like normal resource packs.
 
 ```text
 .minecraft/
@@ -197,39 +163,28 @@ A typical layout is:
             └── Song B.mp3
 ```
 
-Launch Minecraft with ReactiveMusic installed and open the ReactiveMusic songpack menu with:
+Launch Minecraft with ReactiveMusic installed and use:
 
 ```text
 /reactivemusic
 ```
 
-Select the songpack to start playing it.
+to open the songpack menu and select your songpack.
 
 ## Testing and debugging
 
-The ReactiveMusic documentation recommends enabling debug mode while testing a songpack. Debug mode makes songs switch whenever their events become valid and removes silence gaps, which makes condition testing much easier.
+ReactiveMusic's documentation recommends enabling debug mode while testing a songpack. It makes songs switch whenever their events become valid and removes silence gaps.
 
-ReactiveMusic also provides:
+For additional debugging:
 
 ```text
 /reactivemusic toggleLogging
-```
-
-for real-time logging of what the mod is doing.
-
-If you are working with nearby-block conditions, use:
-
-```text
 /reactivemusic logBlockCounter
 ```
 
-to see the nearby block counts and choose an appropriate minimum count.
-
-You can reload a songpack after making changes by selecting another songpack and then selecting yours again, without restarting Minecraft.
+The second command is useful when configuring nearby-block conditions.
 
 ## Supported ReactiveMusic conditions
-
-The editor covers the fixed event types documented by ReactiveMusic:
 
 | Category | Conditions |
 | --- | --- |
@@ -243,32 +198,24 @@ The editor covers the fixed event types documented by ReactiveMusic:
 | Combat | `BOSS` |
 | Dynamic | `BIOME=...`, `BIOMETAG=...`, `DIM=...`, `BLOCK=...,count` |
 
-The editor also preserves raw conditions that it does not recognize, so loading and saving a hand-written songpack should not silently throw away an unfamiliar event expression.
-
 ## YAML compatibility notes
 
 The underlying ReactiveMusic format is YAML, so indentation and structure matter. The editor handles YAML generation for you, but manually editing the generated file should be done carefully.
-
-The official ReactiveMusic documentation recommends using a YAML-aware editor such as VS Code when editing songpacks by hand.
 
 For the full ReactiveMusic songpack format, see the official [Making Songpacks documentation](https://github.com/CircuitLord/ReactiveMusic/blob/master/docs/MAKING_SONGPACKS.md).
 
 ## Project version
 
-The editor build currently uses a four-part version number in the form `0.x.y.z` and displays it in the Help menu. The repository follows the project's versioning convention: `z` is used for smaller fixes/iterations, `y` for a successfully completed larger feature, and `x` for a bundle of larger features.
+The editor uses a four-part version number in the form `0.x.y.z`: `z` is used for smaller fixes/iterations, `y` for a successfully completed larger feature, and `x` for a bundle of larger features.
 
-Current editor build: `0.1.4.3`.
+Current editor build: `0.1.5.0`.
 
-## License and upstream project
+## License and credits
 
-This tool is licensed under the **MIT License**. See [LICENSE](LICENSE) for the full license text.
-
-ReactiveMusic itself is developed by CircuitLord. Refer to the respective repositories for their licensing and distribution terms.
-
-## Credits and development note
+This tool is licensed under the **MIT License**. See [LICENSE](LICENSE).
 
 Created by **Pablo Castelo Branco Amorim** (`pablocbamorim`).
 
-This program was **vibe-coded**: AI tools were used extensively to generate, modify, and debug the code, with the creator directing the development and reviewing the resulting changes.
+This program was **vibe-coded**: AI tools were used extensively to generate, modify, and debug the code, with the creator directing development and reviewing the resulting changes.
 
 ReactiveMusic itself is developed by **CircuitLord**. This project is an independent editor for ReactiveMusic songpacks and is not affiliated with the upstream project.
