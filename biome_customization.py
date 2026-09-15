@@ -91,7 +91,7 @@ def install(app) -> None:
 
     def refresh_editor(entry=None):
         if entry is None and library.selected_entry_id:
-            entry = next((e for e in app.pack_data.entries
+            entry = next((e for e in app.pack.entries
                           if e.id == library.selected_entry_id), None)
         if entry is not None:
             library._build_editor_for(entry)
@@ -101,7 +101,7 @@ def install(app) -> None:
         entry_id = getattr(library, "selected_entry_id", None)
         if lb is None or not entry_id:
             return
-        entry = next((e for e in app.pack_data.entries if e.id == entry_id), None)
+        entry = next((e for e in app.pack.entries if e.id == entry_id), None)
         if entry is None:
             return
         for i, condition in enumerate(entry.biomes):
@@ -198,25 +198,25 @@ def install(app) -> None:
         if not path:
             return
         try:
-            app.pack_data = yaml_io.load_songpack(path)
+            app.pack = yaml_io.load_songpack(path)
         except Exception as exc:
             messagebox.showerror("Load failed", str(exc), parent=app)
             return
         app.current_save_folder = path
         reload_custom(path)
         app.refresh_all()
-        app.set_status(f"Loaded {len(app.pack_data.entries)} entries from {path}")
+        app.set_status(f"Loaded {len(app.pack.entries)} entries from {path}")
 
     def save_config():
         app.info_tab.pull_into_pack()
-        if not app.pack_data.entries:
+        if not app.pack.entries:
             if not messagebox.askyesno("Save Config", "This songpack has no entries yet. Save anyway?", parent=app):
                 return
         folder = filedialog.askdirectory(title="Choose (or create) a folder to save this songpack into")
         if not folder:
             return
         try:
-            path = yaml_io.save_songpack(app.pack_data, folder, copy_music_from=None)
+            path = yaml_io.save_songpack(app.pack, folder, copy_music_from=None)
             _save(folder, custom_biomes, custom_tags)
         except Exception as exc:
             messagebox.showerror("Save failed", str(exc), parent=app)
@@ -228,7 +228,7 @@ def install(app) -> None:
     def new_songpack():
         if not messagebox.askyesno("New Songpack", "Discard the current songpack and start a new one?", parent=app):
             return
-        app.pack_data = Songpack()
+        app.pack = Songpack()
         app.music_source_folder = None
         app.current_save_folder = None
         reload_custom(None)
