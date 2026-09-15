@@ -1,7 +1,8 @@
+# ReactiveMusic Songpack Maker
+
 <p align="center">
   <img src="assets/SoundpackMaker512.png" alt="Soundpack Maker">
 </p>
-# ReactiveMusic Songpack Maker
 
 A desktop editor for creating and maintaining songpacks for the [ReactiveMusic](https://github.com/CircuitLord/ReactiveMusic) Minecraft mod.
 
@@ -10,7 +11,11 @@ ReactiveMusic songpacks are folders containing a `ReactiveMusic.yaml` configurat
 This program provides a graphical interface for building that YAML instead of editing the configuration by hand. It can scan a music folder, create song entries, configure event conditions, manage priority, and preserve conditions that the GUI does not recognize.
 
 ## What it does
-![alt text](.assets/showcase.png)
+
+<p align="center">
+  <img src="assets/showcase.png" alt="Soundpack Maker">
+</p>
+
 The editor currently provides:
 
 - Songpack metadata editing: name, version, author, description, credits, music switch speed, and music delay length.
