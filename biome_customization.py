@@ -36,9 +36,16 @@ def _load(folder: str):
         return {}, {}
     if not isinstance(data, dict):
         return {}, {}
+
     def clean(value):
-        return {str(k): str(v).lower() for k, v in value.items()
-                if isinstance(value, dict) and _valid_color(v)}
+        if not isinstance(value, dict):
+            return {}
+        return {
+            str(k): str(v).lower()
+            for k, v in value.items()
+            if _valid_color(v)
+        }
+
     return clean(data.get("biomes", {})), clean(data.get("biome_tags", {}))
 
 
