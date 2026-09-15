@@ -5,14 +5,13 @@ import json
 import os
 import tempfile
 import tkinter as tk
-from tkinter import colorchooser, messagebox, ttk
+from tkinter import colorchooser, filedialog, messagebox, ttk
 from types import MethodType
 
 CONFIG_FILENAME = "biome_customization.json"
 
 
 def default_color(name: str, is_tag: bool = False) -> str:
-    """Return a deterministic, readable color for a biome/biome-tag name."""
     hue = (sum((i + 1) * ord(c) for i, c in enumerate(name)) % 360) / 360.0
     saturation = 0.62 if is_tag else 0.58
     r, g, b = colorsys.hsv_to_rgb(hue, saturation, 0.92)
@@ -30,284 +29,213 @@ def _valid_color(value: str) -> bool:
 
 
 def _load(folder: str):
-    path = os.path.join(folder, CONFIG_FILENAME)
     try:
-        with open(path, encoding="utf-8") as handle:
-            data = json.load(handle)
+        with open(os.path.join(folder, CONFIG_FILENAME), encoding="utf-8") as f:
+            data = json.load(f)
     except (OSError, ValueError, TypeError):
         return {}, {}
-
     if not isinstance(data, dict):
         return {}, {}
-    biomes = data.get("biomes", {})
-    tags = data.get("biome_tags", {})
-    if not isinstance(biomes, dict):
-        biomes = {}
-    if not isinstance(tags, dict):
-        tags = {}
-
-    return (
-        {str(k): str(v).lower() for k, v in biomes.items() if _valid_color(v)},
-        {str(k): str(v).lower() for k, v in tags.items() if _valid_color(v)},
-    )
+    def clean(value):
+        return {str(k): str(v).lower() for k, v in value.items()
+                if isinstance(value, dict) and _valid_color(v)}
+    return clean(data.get("biomes", {})), clean(data.get("biome_tags", {}))
 
 
-def _save(folder: str, biomes: dict[str, str], tags: dict[str, str]) -> None:
-    """Atomically write the customization file into the songpack folder."""
+def _save(folder: str, biomes: dict[str, str], tags: dict[str, str]):
     os.makedirs(folder, exist_ok=True)
     target = os.path.join(folder, CONFIG_FILENAME)
-    fd, temp_path = tempfile.mkstemp(
-        prefix=".biome_customization_", suffix=".tmp", dir=folder
-    )
+    fd, tmp = tempfile.mkstemp(prefix=".biome_customization_", suffix=".tmp", dir=folder)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(
-                {
-                    "version": 1,
-                    "biomes": dict(sorted(biomes.items(), key=lambda item: item[0].lower())),
-                    "biome_tags": dict(sorted(tags.items(), key=lambda item: item[0].lower())),
-                },
-                handle,
-                indent=2,
-                ensure_ascii=False,
-            )
-            handle.write("\n")
-        os.replace(temp_path, target)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump({
+                "version": 1,
+                "biomes": dict(sorted(biomes.items(), key=lambda x: x[0].lower())),
+                "biome_tags": dict(sorted(tags.items(), key=lambda x: x[0].lower())),
+            }, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        os.replace(tmp, target)
     except Exception:
         try:
-            os.unlink(temp_path)
+            os.unlink(tmp)
         except OSError:
             pass
         raise
 
 
 def install(app) -> None:
-    """Install custom biome/tag support on the existing LibraryTab instance."""
     import constants as C
+    import yaml_io
+    from models import Songpack
 
     library = app.library_tab
-    builtin_biome_colors = {
-        name: default_color(name) for name in C.COMMON_BIOMES
-    }
-    builtin_tag_colors = {
-        name: default_color(name, True) for name in C.COMMON_BIOME_TAGS
-    }
     custom_biomes: dict[str, str] = {}
     custom_tags: dict[str, str] = {}
 
-    def catalog(is_tag: bool):
-        base = C.COMMON_BIOME_TAGS if is_tag else C.COMMON_BIOMES
+    def catalog(is_tag):
+        builtins = C.COMMON_BIOME_TAGS if is_tag else C.COMMON_BIOMES
         custom = custom_tags if is_tag else custom_biomes
-        builtin = builtin_tag_colors if is_tag else builtin_biome_colors
-        names = list(dict.fromkeys([*base, *custom]))
-        colors = {
-            name: custom.get(name, builtin.get(
-                name, default_color(name, is_tag)))
-            for name in names
-        }
-        return names, colors
+        return list(dict.fromkeys([*builtins, *custom])), custom
 
-    def available(self, entry, is_tag: bool):
+    def available(self, entry, is_tag):
         names, _ = catalog(is_tag)
-        used = {
-            condition.value for condition in entry.biomes if condition.is_tag == is_tag}
-        return [name for name in names if name not in used]
+        used = {b.value for b in entry.biomes if b.is_tag == is_tag}
+        return [n for n in names if n not in used]
+
+    def refresh_editor(entry=None):
+        if entry is None and library.selected_entry_id:
+            entry = next((e for e in app.pack_data.entries
+                          if e.id == library.selected_entry_id), None)
+        if entry is not None:
+            library._build_editor_for(entry)
 
     def recolor_listbox():
-        listbox = getattr(library, "biome_listbox", None)
+        lb = getattr(library, "biome_listbox", None)
         entry_id = getattr(library, "selected_entry_id", None)
-        if listbox is None or not entry_id:
+        if lb is None or not entry_id:
             return
-        entry = next(
-            (item for item in app.pack.entries if item.id == entry_id), None)
+        entry = next((e for e in app.pack_data.entries if e.id == entry_id), None)
         if entry is None:
             return
-        for index, condition in enumerate(entry.biomes):
-            _, colors = catalog(condition.is_tag)
-            listbox.itemconfig(
-                index,
-                foreground=colors.get(
-                    condition.value, default_color(
-                        condition.value, condition.is_tag)
-                ),
-            )
+        for i, condition in enumerate(entry.biomes):
+            custom = custom_tags if condition.is_tag else custom_biomes
+            color = custom.get(condition.value, default_color(condition.value, condition.is_tag))
+            lb.itemconfig(i, foreground=color)
 
-    def open_add_dialog():
+    def choose_color(parent, initial):
+        result = colorchooser.askcolor(color=initial, parent=parent, title="Biome text color")
+        return result[1].lower() if result[1] else None
+
+    def add_custom_dialog():
         window = tk.Toplevel(app)
         window.title("Add Custom Biome / Biome Tag")
         window.resizable(False, False)
         window.transient(app)
         window.grab_set()
 
+        body = ttk.Frame(window)
+        body.pack(padx=14, pady=14)
         name_var = tk.StringVar()
         type_var = tk.StringVar(value="Biome")
         color_var = tk.StringVar(value="#66ccff")
 
-        body = ttk.Frame(window)
-        body.pack(padx=14, pady=14)
-        ttk.Label(body, text="Name / identifier:").grid(
-            row=0, column=0, padx=6, pady=5, sticky="e"
-        )
-        ttk.Entry(body, textvariable=name_var, width=34).grid(
-            row=0, column=1, columnspan=2, padx=2, pady=5
-        )
-        ttk.Label(body, text="Type:").grid(
-            row=1, column=0, padx=6, pady=5, sticky="e"
-        )
-        ttk.Combobox(
-            body, textvariable=type_var, values=("Biome", "Biome Tag"),
-            state="readonly", width=14,
-        ).grid(row=1, column=1, padx=2, pady=5, sticky="w")
-        ttk.Label(body, text="Text color:").grid(
-            row=2, column=0, padx=6, pady=5, sticky="e"
-        )
-        swatch = tk.Label(body, text="        ",
-                          bg=color_var.get(), relief="sunken")
+        ttk.Label(body, text="Name / identifier:").grid(row=0, column=0, padx=6, pady=5)
+        ttk.Entry(body, textvariable=name_var, width=34).grid(row=0, column=1, columnspan=2, padx=2, pady=5)
+        ttk.Label(body, text="Type:").grid(row=1, column=0, padx=6, pady=5)
+        ttk.Combobox(body, textvariable=type_var, values=("Biome", "Biome Tag"),
+                     state="readonly", width=14).grid(row=1, column=1, padx=2, pady=5, sticky="w")
+        ttk.Label(body, text="Text color:").grid(row=2, column=0, padx=6, pady=5)
+        swatch = tk.Label(body, text="        ", bg=color_var.get(), relief="sunken")
         swatch.grid(row=2, column=1, padx=2, pady=5, sticky="w")
 
-        def choose_color():
-            result = colorchooser.askcolor(
-                color=color_var.get(), parent=window, title="Biome text color"
-            )
-            if result[1]:
-                color_var.set(result[1].lower())
-                swatch.configure(bg=result[1])
+        def pick():
+            color = choose_color(window, color_var.get())
+            if color:
+                color_var.set(color)
+                swatch.configure(bg=color)
 
-        ttk.Button(body, text="Choose…", command=choose_color).grid(
-            row=2, column=2, padx=4, pady=5
-        )
+        ttk.Button(body, text="Choose…", command=pick).grid(row=2, column=2, padx=4, pady=5)
 
-        def add_custom():
+        def add():
             name = name_var.get().strip()
-            color = color_var.get().strip().lower()
             is_tag = type_var.get() == "Biome Tag"
+            color = color_var.get().strip().lower()
+            builtins = C.COMMON_BIOME_TAGS if is_tag else C.COMMON_BIOMES
             custom = custom_tags if is_tag else custom_biomes
-            builtin = C.COMMON_BIOME_TAGS if is_tag else C.COMMON_BIOMES
-
             if not name:
-                messagebox.showwarning(
-                    "Custom biome", "Enter a biome/biome-tag name.", parent=window
-                )
+                messagebox.showwarning("Custom biome", "Enter a name.", parent=window)
                 return
-            if name in builtin:
-                messagebox.showwarning(
-                    "Custom biome",
-                    "That name is already a built-in biome/biome-tag.",
-                    parent=window,
-                )
+            if name in builtins or name in custom:
+                messagebox.showwarning("Custom biome", "That name already exists.", parent=window)
                 return
             if not _valid_color(color):
-                messagebox.showwarning(
-                    "Custom biome", "Choose a valid text color.", parent=window
-                )
+                messagebox.showwarning("Custom biome", "Choose a valid text color.", parent=window)
                 return
-
             custom[name] = color
             window.destroy()
+            refresh_editor()
+            app.set_status(f"Added custom {'biome tag' if is_tag else 'biome'} '{name}'.")
 
-            if library.selected_entry_id:
-                entry = next(
-                    (item for item in app.pack.entries
-                     if item.id == library.selected_entry_id),
-                    None,
-                )
-                if entry is not None:
-                    library._build_editor_for(entry)
-                    library.biome_search_var.set(name)
-                    if is_tag:
-                        library.biome_is_tag_var.set(True)
-                        library.biome_combobox.configure(
-                            values=library._available_biome_values(entry, True)
-                        )
-                    recolor_listbox()
-            app.set_status(
-                f"Added custom {'biome tag' if is_tag else 'biome'} '{name}'.")
-
-        ttk.Button(body, text="Cancel", command=window.destroy).grid(
-            row=3, column=1, padx=4, pady=(8, 0), sticky="e"
-        )
-        ttk.Button(body, text="Add", command=add_custom).grid(
-            row=3, column=2, padx=4, pady=(8, 0), sticky="e"
-        )
-        window.bind("<Return>", lambda _event: add_custom())
-        window.bind("<Escape>", lambda _event: window.destroy())
+        ttk.Button(body, text="Cancel", command=window.destroy).grid(row=3, column=1, padx=4, pady=(8, 0), sticky="e")
+        ttk.Button(body, text="Add", command=add).grid(row=3, column=2, padx=4, pady=(8, 0), sticky="e")
+        window.bind("<Return>", lambda _e: add())
+        window.bind("<Escape>", lambda _e: window.destroy())
 
     original_build = library._build_editor_for
 
     def build(self, entry):
         self._available_biome_values = MethodType(available, self)
         original_build(entry)
-
-        # The original editor exposes the exact combobox row we need.
-        parent = self.biome_combobox.master
-        if not any(
-            isinstance(child, ttk.Button) and child.cget(
-                "text") == "Add custom…"
-            for child in parent.winfo_children()
-        ):
-            ttk.Button(
-                parent, text="Add custom…", command=open_add_dialog
-            ).pack(side="left", padx=4)
+        biome_frame = next((w for w in self.editor_frame.winfo_children()
+                            if isinstance(w, ttk.LabelFrame) and w.cget("text") == "Biome"), None)
+        if biome_frame is not None:
+            if not any(isinstance(w, ttk.Button) and w.cget("text") == "Add custom…"
+                       for w in biome_frame.winfo_children()):
+                ttk.Button(biome_frame, text="Add custom…", command=add_custom_dialog).pack(
+                    anchor="w", padx=4, pady=(0, 4))
         recolor_listbox()
 
     library._build_editor_for = MethodType(build, library)
 
-    original_load = app.action_load_config
-    original_save = app.action_save_config
-    original_new = app.action_new_songpack
-
-    def load_config():
-        original_load()
-        folder = app.current_save_folder
-        if not folder:
-            return
+    def reload_custom(folder):
         custom_biomes.clear()
         custom_tags.clear()
-        loaded_biomes, loaded_tags = _load(folder)
-        custom_biomes.update(loaded_biomes)
-        custom_tags.update(loaded_tags)
-        if library.selected_entry_id:
-            entry = next(
-                (item for item in app.pack.entries
-                 if item.id == library.selected_entry_id),
-                None,
-            )
-            if entry is not None:
-                library._build_editor_for(entry)
+        if folder:
+            b, t = _load(folder)
+            custom_biomes.update(b)
+            custom_tags.update(t)
+
+    def load_config():
+        path = filedialog.askdirectory(
+            title="Select the songpack folder (containing ReactiveMusic.yaml)")
+        if not path:
+            return
+        try:
+            app.pack_data = yaml_io.load_songpack(path)
+        except Exception as exc:
+            messagebox.showerror("Load failed", str(exc), parent=app)
+            return
+        app.current_save_folder = path
+        reload_custom(path)
+        app.refresh_all()
+        app.set_status(f"Loaded {len(app.pack_data.entries)} entries from {path}")
 
     def save_config():
-        original_save()
-        folder = app.current_save_folder
+        app.info_tab.pull_into_pack()
+        if not app.pack_data.entries:
+            if not messagebox.askyesno("Save Config", "This songpack has no entries yet. Save anyway?", parent=app):
+                return
+        folder = filedialog.askdirectory(title="Choose (or create) a folder to save this songpack into")
         if not folder:
             return
         try:
+            path = yaml_io.save_songpack(app.pack_data, folder, copy_music_from=None)
             _save(folder, custom_biomes, custom_tags)
-        except OSError as exc:
-            messagebox.showerror(
-                "Biome customization",
-                f"Could not save biome customization:\n{exc}",
-                parent=app,
-            )
+        except Exception as exc:
+            messagebox.showerror("Save failed", str(exc), parent=app)
             return
+        app.current_save_folder = folder
         app.set_status(f"Saved songpack and biome customization to {folder}")
+        messagebox.showinfo("Saved", f"Songpack saved to:\n{path}\n\nBiome customization saved to:\n{os.path.join(folder, CONFIG_FILENAME)}", parent=app)
 
     def new_songpack():
-        original_new()
-        custom_biomes.clear()
-        custom_tags.clear()
+        if not messagebox.askyesno("New Songpack", "Discard the current songpack and start a new one?", parent=app):
+            return
+        app.pack_data = Songpack()
+        app.music_source_folder = None
+        app.current_save_folder = None
+        reload_custom(None)
+        app.refresh_all()
+        app.set_status("Started a new, empty songpack.")
 
     app.action_load_config = load_config
     app.action_save_config = save_config
     app.action_new_songpack = new_songpack
 
-    # App._build_menu stores the original bound methods as Menu callbacks.
-    # Changing app.action_* afterwards does not replace those callbacks, so
-    # update the actual menu entries too.
     menu_name = app.cget("menu")
     if menu_name:
         menubar = app.nametowidget(menu_name)
-        menubar.entryconfigure("File")
-        filemenu_name = menubar.entrycget("File", "menu")
+        filemenu_name = menubar.entrycget(menubar.index("File"), "menu")
         if filemenu_name:
             filemenu = app.nametowidget(filemenu_name)
             filemenu.entryconfigure("New Songpack", command=new_songpack)
@@ -315,6 +243,4 @@ def install(app) -> None:
             filemenu.entryconfigure("Save Config…", command=save_config)
 
     if app.current_save_folder:
-        loaded_biomes, loaded_tags = _load(app.current_save_folder)
-        custom_biomes.update(loaded_biomes)
-        custom_tags.update(loaded_tags)
+        reload_custom(app.current_save_folder)
