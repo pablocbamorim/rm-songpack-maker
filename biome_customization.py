@@ -101,14 +101,16 @@ def install(app) -> None:
         builtin = builtin_tag_colors if is_tag else builtin_biome_colors
         names = list(dict.fromkeys([*base, *custom]))
         colors = {
-            name: custom.get(name, builtin.get(name, default_color(name, is_tag)))
+            name: custom.get(name, builtin.get(
+                name, default_color(name, is_tag)))
             for name in names
         }
         return names, colors
 
     def available(self, entry, is_tag: bool):
         names, _ = catalog(is_tag)
-        used = {condition.value for condition in entry.biomes if condition.is_tag == is_tag}
+        used = {
+            condition.value for condition in entry.biomes if condition.is_tag == is_tag}
         return [name for name in names if name not in used]
 
     def recolor_listbox():
@@ -116,7 +118,8 @@ def install(app) -> None:
         entry_id = getattr(library, "selected_entry_id", None)
         if listbox is None or not entry_id:
             return
-        entry = next((item for item in app.pack.entries if item.id == entry_id), None)
+        entry = next(
+            (item for item in app.pack.entries if item.id == entry_id), None)
         if entry is None:
             return
         for index, condition in enumerate(entry.biomes):
@@ -124,7 +127,8 @@ def install(app) -> None:
             listbox.itemconfig(
                 index,
                 foreground=colors.get(
-                    condition.value, default_color(condition.value, condition.is_tag)
+                    condition.value, default_color(
+                        condition.value, condition.is_tag)
                 ),
             )
 
@@ -157,7 +161,8 @@ def install(app) -> None:
         ttk.Label(body, text="Text color:").grid(
             row=2, column=0, padx=6, pady=5, sticky="e"
         )
-        swatch = tk.Label(body, text="        ", bg=color_var.get(), relief="sunken")
+        swatch = tk.Label(body, text="        ",
+                          bg=color_var.get(), relief="sunken")
         swatch.grid(row=2, column=1, padx=2, pady=5, sticky="w")
 
         def choose_color():
@@ -215,7 +220,8 @@ def install(app) -> None:
                             values=library._available_biome_values(entry, True)
                         )
                     recolor_listbox()
-            app.set_status(f"Added custom {'biome tag' if is_tag else 'biome'} '{name}'.")
+            app.set_status(
+                f"Added custom {'biome tag' if is_tag else 'biome'} '{name}'.")
 
         ttk.Button(body, text="Cancel", command=window.destroy).grid(
             row=3, column=1, padx=4, pady=(8, 0), sticky="e"
@@ -235,7 +241,8 @@ def install(app) -> None:
         # The original editor exposes the exact combobox row we need.
         parent = self.biome_combobox.master
         if not any(
-            isinstance(child, ttk.Button) and child.cget("text") == "Add custom…"
+            isinstance(child, ttk.Button) and child.cget(
+                "text") == "Add custom…"
             for child in parent.winfo_children()
         ):
             ttk.Button(
