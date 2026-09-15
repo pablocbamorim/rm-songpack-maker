@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import tkinter as tk
 from tkinter import ttk, colorchooser, messagebox
+import customtkinter as ctk
 
 import biome_customization
 import constants as C
@@ -26,37 +27,42 @@ class SettingsTab(ttk.Frame):
         super().__init__(parent)
         self.app = app
 
-        body = ttk.Frame(self)
+        body = ctk.CTkFrame(self, fg_color="transparent")
         body.pack(fill="both", expand=True, padx=10, pady=10)
 
         # ---- editor preferences ------------------------------------------
-        prefs = ttk.LabelFrame(body, text="Editor preferences")
+        prefs = ctk.CTkFrame(body)
         prefs.pack(fill="x")
+
+        ctk.CTkLabel(
+            prefs, text="Editor preferences", font=("", 14, "bold")
+        ).pack(anchor="w", padx=12, pady=(10, 4))
 
         self.double_click_var = tk.BooleanVar(
             value=bool(app.settings.get("double_click_preview", False)))
-        ttk.Checkbutton(
+        ctk.CTkSwitch(
             prefs,
             text="Double-click a song in the list to play/pause its preview",
             variable=self.double_click_var,
             command=self._on_double_click_toggled,
-        ).pack(anchor="w", padx=8, pady=(8, 2))
+        ).pack(anchor="w", padx=12, pady=(6, 4))
 
         self.dark_var = tk.BooleanVar(
             value=bool(app.settings.get("dark_theme", True)))
-        ttk.Checkbutton(
+        ctk.CTkSwitch(
             prefs,
             text="Use dark theme",
             variable=self.dark_var,
             command=self._on_theme_toggled,
-        ).pack(anchor="w", padx=8, pady=2)
+        ).pack(anchor="w", padx=12, pady=4)
 
-        ttk.Label(
+        ctk.CTkLabel(
             prefs,
             text=("Saved to your user profile, so they apply to every songpack and every "
                   "time you open the editor."),
-            style="Muted.TLabel",
-        ).pack(anchor="w", padx=8, pady=(2, 8))
+            text_color=("gray40", "gray70"),
+            justify="left",
+        ).pack(anchor="w", padx=12, pady=(2, 10))
 
         # ---- biome colours -----------------------------------------------
         colors = ttk.LabelFrame(
