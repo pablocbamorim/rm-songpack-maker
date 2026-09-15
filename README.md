@@ -249,6 +249,8 @@ For the full ReactiveMusic songpack format, see the official [Making Songpacks d
 
 The editor build currently uses a four-part version number in the form `0.x.y.z` and displays it in the Help menu. The repository follows the project's versioning convention: `z` is used for smaller fixes/iterations, `y` for a successfully completed larger feature, and `x` for a bundle of larger features.
 
+Current editor build: `0.1.4.2`.
+
 ## License and upstream project
 
 This tool is an independent editor for the ReactiveMusic songpack format. ReactiveMusic itself is developed by CircuitLord. Refer to the respective repositories for their licensing and distribution terms.
