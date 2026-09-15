@@ -8,14 +8,17 @@ across songpacks and across runs. Biome/biome-tag colours are NOT here:
 those belong to a songpack and are stored next to it by
 biome_customization.py.
 
-UI appearance is handled by CustomTkinter in app_core.py; this module
-only owns the persisted settings values.
+UI appearance is handled by CustomTkinter. This module only owns persisted
+settings and exposes a small compatibility wrapper used by the existing App
+view while the rest of the UI is migrated incrementally.
 """
 
 from __future__ import annotations
 
 import json
 import os
+
+import customtkinter as ctk
 
 SETTINGS_DIR = os.path.join(os.path.expanduser("~"), ".rm-songpack-maker")
 SETTINGS_PATH = os.path.join(SETTINGS_DIR, "settings.json")
@@ -57,3 +60,8 @@ def save(settings: dict) -> None:
                   f, indent=2)
         f.write("\n")
     os.replace(tmp, SETTINGS_PATH)
+
+
+def apply_theme(_app, dark: bool = True) -> None:
+    """Compatibility wrapper: theme switching is delegated to CustomTkinter."""
+    ctk.set_appearance_mode("dark" if dark else "light")
