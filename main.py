@@ -6,6 +6,7 @@ import sys
 try:
     import app
     import ui_enhancements
+    import biome_customization
 except ImportError as exc:
     if "tkinter" in str(exc).lower():
         print("This program needs Python's 'tkinter' GUI library.",
@@ -33,6 +34,7 @@ def main():
     application = app.App()
     _set_window_icon(application)
     ui_enhancements.install(application)
+    biome_customization.install(application)
     application.mainloop()
 
 
