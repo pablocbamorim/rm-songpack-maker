@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog, colorchooser
+import customtkinter as ctk
 
 import constants as C
 import block_data
@@ -1242,8 +1243,16 @@ class PriorityTab(ttk.Frame):
 # ---------------------------------------------------------------------------
 # Main application window
 # ---------------------------------------------------------------------------
-class App(tk.Tk):
+class App(ctk.CTk):
     def __init__(self):
+        ctk.set_default_color_theme("blue")
+
+        self.settings = app_settings.load()
+
+        ctk.set_appearance_mode(
+            "dark" if self.settings.get("dark_theme", True) else "light"
+        )
+
         super().__init__()
         self.title("ReactiveMusic Songpack Editor")
         self.geometry("1080x700")
@@ -1257,7 +1266,6 @@ class App(tk.Tk):
 
         # Editor-wide preferences (theme, preview behaviour). Loaded before
         # the tabs are built because SettingsTab reads them on construction.
-        self.settings = app_settings.load()
 
         self.status_var = tk.StringVar(
             value="Ready. Start with File > New Songpack, Load Config…, or Load Music Folder…"
@@ -1345,9 +1353,8 @@ class App(tk.Tk):
 
     # -- settings -------------------------------------------------
     def apply_theme(self):
-        """(Re-)apply the light/dark palette from the current settings."""
-        app_settings.apply_theme(
-            self, bool(self.settings.get("dark_theme", True)))
+        ctk.set_appearance_mode(
+            "dark" if self.settings.get("dark_theme", True) else "light")
 
     def save_settings(self):
         try:
