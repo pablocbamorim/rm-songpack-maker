@@ -185,8 +185,8 @@ ReactiveMusic's songpack documentation places songpacks in Minecraft's `resource
         ├── ReactiveMusic.yaml
         ├── biome_customization.json
         └── music/
-            ├── Song A.mp3
-            └── Song B.mp3
+            ├── Song A.ogg
+            └── Song B.ogg
 ```
 
 Launch Minecraft with ReactiveMusic installed and use:
@@ -234,7 +234,7 @@ For the full ReactiveMusic songpack format, see the official [Making Songpacks d
 
 The editor uses a four-part version number in the form `0.x.y.z`: `z` is used for smaller fixes/iterations, `y` for a successfully completed larger feature, and `x` for a bundle of larger features.
 
-Current editor build: `0.1.7.0`.
+Current editor build: `0.1.7.1`.
 
 ## License and credits
 
