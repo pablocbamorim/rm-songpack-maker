@@ -4,9 +4,10 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+    tags: ['v*']
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-windows:
@@ -44,8 +45,23 @@ jobs:
           }
           Write-Host "Built SoundpackMaker.exe ($size bytes)"
 
-      - name: Upload executable
+      - name: Package Windows release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}"
+          Compress-Archive -Path "dist/SoundpackMaker.exe" -DestinationPath "dist/SoundpackMaker-$version-Windows.zip"
+
+      - name: Upload executable artifact
         uses: actions/upload-artifact@v4
         with:
           name: SoundpackMaker-Windows
           path: dist/SoundpackMaker.exe
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Soundpack Maker ${{ github.ref_name }}
+          generate_release_notes: true
+          files: dist/SoundpackMaker-${{ github.ref_name }}-Windows.zip
