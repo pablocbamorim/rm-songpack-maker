@@ -146,6 +146,10 @@ COMMON_BIOME_TAGS = [
 # ---------------------------------------------------------------------------
 # Advanced per-entry flags, straight from MAKING_SONGPACKS.md.
 # ---------------------------------------------------------------------------
+COMMON_DIMENSIONS = [
+    "minecraft:overworld", "minecraft:the_nether", "minecraft:the_end",
+]
+
 DEFAULT_ALLOW_FALLBACK = True  # see priority.py / README for why this
 # default matters for the "don't loop the
 # same rare song" requirement.

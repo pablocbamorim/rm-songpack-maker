@@ -6,7 +6,6 @@ import sys
 try:
     import app
     import ui_enhancements
-    import biome_customization
     import version_ui
 except ImportError as exc:
     if "tkinter" in str(exc).lower():
@@ -32,10 +31,9 @@ def _set_window_icon(application):
 
 
 def main():
-    # Install biome support before App() is constructed.  This lets the
-    # LibraryTab build the custom biome controls normally and lets App's File
-    # menu capture the customized load/save/new callbacks during initialization.
-    biome_customization.install()
+    # Biome customization (custom biomes/tags + colors) is built directly
+    # into App/LibraryTab in app_core.py, so no separate install step is
+    # needed for it anymore.
     application = app.App()
     _set_window_icon(application)
     ui_enhancements.install(application)

@@ -16,14 +16,16 @@ See README.md for the reasoning behind the rarity scoring and the
 
 from __future__ import annotations
 
+import os
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, simpledialog
+from tkinter import ttk, filedialog, messagebox, simpledialog, colorchooser
 
 import constants as C
 import block_data
 import yaml_io
 import priority
 import condition_logic
+import biome_customization
 from models import Songpack, Entry, BiomeCondition, DimensionCondition, BlockCondition
 
 
@@ -334,10 +336,18 @@ class LibraryTab(ttk.Frame):
     # -- helpers -------------------------------------------------
     def _available_biome_values(self, entry: Entry, is_tag: bool):
         """Biome/biome-tag options not already added to this entry, so the
-        picker doesn't keep offering values that are already selected."""
-        pool = C.COMMON_BIOME_TAGS if is_tag else C.COMMON_BIOMES
+        picker doesn't keep offering values that are already selected.
+        Includes both the built-in list and any custom biomes/tags the
+        user has defined for this songpack.
+        """
+        builtins = C.COMMON_BIOME_TAGS if is_tag else C.COMMON_BIOMES
+        custom = self.app.biome_custom_tags if is_tag else self.app.biome_custom_biomes
         used = {b.value for b in entry.biomes if b.is_tag == is_tag}
-        return [v for v in pool if v not in used]
+        return [v for v in [*builtins, *custom] if v not in used]
+
+    def _biome_color(self, value: str, is_tag: bool) -> str:
+        custom = self.app.biome_custom_tags if is_tag else self.app.biome_custom_biomes
+        return custom.get(value, biome_customization.default_color(value, is_tag))
 
     # -- editor construction -------------------------------------------------
     def _build_editor_for(self, entry: Entry):
@@ -389,6 +399,8 @@ class LibraryTab(ttk.Frame):
         ).pack(side="left", padx=8)
         ttk.Button(row1, text="Add", command=lambda: self._add_biome(
             entry)).pack(side="left", padx=4)
+        ttk.Button(row1, text="Add custom…", command=lambda: self._open_custom_biome_dialog(
+            entry)).pack(side="left", padx=4)
 
         row2 = ttk.Frame(biome_frame)
         row2.pack(fill="x", padx=4)
@@ -404,9 +416,11 @@ class LibraryTab(ttk.Frame):
         self.biome_listbox = tk.Listbox(
             biome_frame, height=min(4, max(2, len(entry.biomes))))
         self.biome_listbox.pack(fill="x", padx=4, pady=4)
-        for b in entry.biomes:
+        for index, b in enumerate(entry.biomes):
             self.biome_listbox.insert(
                 "end", ("[TAG] " if b.is_tag else "") + b.value)
+            self.biome_listbox.itemconfig(
+                index, foreground=self._biome_color(b.value, b.is_tag))
         ttk.Button(biome_frame, text="Remove selected", command=lambda: self._remove_biome(entry)).pack(
             anchor="w", padx=4, pady=(0, 4)
         )
@@ -662,6 +676,84 @@ class LibraryTab(ttk.Frame):
         del entry.biomes[sel[0]]
         self._refresh_after_change(entry, rebuild=True)
 
+    def _open_custom_biome_dialog(self, entry: Entry):
+        """Define a brand-new custom biome or biome tag (with its own text
+        color) so it becomes available in the picker above. This does NOT
+        add a condition to the entry by itself -- use "Add" for that once
+        the new value is defined.
+        """
+        window = tk.Toplevel(self)
+        window.title("Add Custom Biome / Biome Tag")
+        window.resizable(False, False)
+        window.transient(self)
+        window.grab_set()
+
+        body = ttk.Frame(window)
+        body.pack(padx=14, pady=14)
+        name_var = tk.StringVar()
+        type_var = tk.StringVar(value="Biome")
+        color_var = tk.StringVar(
+            value=biome_customization.default_color("custom"))
+
+        ttk.Label(body, text="Name / identifier:").grid(
+            row=0, column=0, padx=6, pady=5)
+        ttk.Entry(body, textvariable=name_var, width=34).grid(
+            row=0, column=1, columnspan=2, padx=2, pady=5)
+        ttk.Label(body, text="Type:").grid(row=1, column=0, padx=6, pady=5)
+        ttk.Combobox(
+            body, textvariable=type_var, values=("Biome", "Biome Tag"),
+            state="readonly", width=14,
+        ).grid(row=1, column=1, padx=2, pady=5, sticky="w")
+        ttk.Label(body, text="Text color:").grid(
+            row=2, column=0, padx=6, pady=5)
+        swatch = tk.Label(body, text="        ",
+                          bg=color_var.get(), relief="sunken")
+        swatch.grid(row=2, column=1, padx=2, pady=5, sticky="w")
+
+        def pick():
+            result = colorchooser.askcolor(
+                color=color_var.get(), parent=window, title="Biome text color")
+            if result[1]:
+                color = result[1].lower()
+                color_var.set(color)
+                swatch.configure(bg=color)
+
+        ttk.Button(body, text="Choose…", command=pick).grid(
+            row=2, column=2, padx=4, pady=5)
+
+        def add():
+            name = name_var.get().strip()
+            is_tag = type_var.get() == "Biome Tag"
+            color = color_var.get().strip().lower()
+            builtins = C.COMMON_BIOME_TAGS if is_tag else C.COMMON_BIOMES
+            custom = self.app.biome_custom_tags if is_tag else self.app.biome_custom_biomes
+            if not name:
+                messagebox.showwarning(
+                    "Custom biome", "Enter a name.", parent=window)
+                return
+            if name in builtins or name in custom:
+                messagebox.showwarning(
+                    "Custom biome", "That name already exists.", parent=window)
+                return
+            if not biome_customization.valid_color(color):
+                messagebox.showwarning(
+                    "Custom biome", "Choose a valid text color.", parent=window)
+                return
+            custom[name] = color
+            window.destroy()
+            self._build_editor_for(entry)
+            self.app.set_status(
+                f"Added custom {'biome tag' if is_tag else 'biome'} '{name}'. "
+                "Save the songpack to keep this definition."
+            )
+
+        ttk.Button(body, text="Cancel", command=window.destroy).grid(
+            row=3, column=1, padx=4, pady=(8, 0), sticky="e")
+        ttk.Button(body, text="Add", command=add).grid(
+            row=3, column=2, padx=4, pady=(8, 0), sticky="e")
+        window.bind("<Return>", lambda _e: add())
+        window.bind("<Escape>", lambda _e: window.destroy())
+
     def _add_dimension(self, entry: Entry):
         value = self.dim_search_var.get().strip()
         if not value:
@@ -845,6 +937,8 @@ class App(tk.Tk):
         self.pack_data = Songpack()
         self.music_source_folder = None
         self.current_save_folder = None
+        self.biome_custom_biomes = {}
+        self.biome_custom_tags = {}
 
         self.status_var = tk.StringVar(
             value="Ready. Start with File > New Songpack, Load Config…, or Load Music Folder…"
@@ -923,6 +1017,8 @@ class App(tk.Tk):
         self.pack_data = Songpack()
         self.music_source_folder = None
         self.current_save_folder = None
+        self.biome_custom_biomes = {}
+        self.biome_custom_tags = {}
         self.refresh_all()
         self.set_status("Started a new, empty songpack.")
 
@@ -933,9 +1029,12 @@ class App(tk.Tk):
             return
         try:
             self.pack_data = yaml_io.load_songpack(path)
+            biomes, tags = biome_customization.load(path)
         except Exception as exc:  # noqa: BLE001 - surface any load error to the user
             messagebox.showerror("Load failed", str(exc))
             return
+        self.biome_custom_biomes = biomes
+        self.biome_custom_tags = tags
         self.current_save_folder = path
         self.refresh_all()
         self.set_status(
@@ -972,12 +1071,19 @@ class App(tk.Tk):
         try:
             path = yaml_io.save_songpack(
                 self.pack_data, folder, copy_music_from=None)
+            biome_customization.save(
+                folder, self.biome_custom_biomes, self.biome_custom_tags)
         except Exception as exc:
             messagebox.showerror("Save failed", str(exc))
             return
         self.current_save_folder = folder
         self.set_status(f"Saved to {path}")
-        messagebox.showinfo("Saved", f"Songpack saved to:\n{path}")
+        messagebox.showinfo(
+            "Saved",
+            f"Songpack saved to:\n{path}\n\n"
+            f"Biome customization saved to:\n"
+            f"{os.path.join(folder, biome_customization.CONFIG_FILENAME)}",
+        )
 
     def action_show_about(self):
         messagebox.showinfo(
