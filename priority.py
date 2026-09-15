@@ -93,6 +93,11 @@ def auto_priority_order(entries: List[Entry]) -> List[Entry]:
     return sorted(entries, key=score_entry, reverse=True)
 
 
+def order_entries(entries: List[Entry]) -> List[Entry]:
+    """Backward-compatible name used by the priority UI."""
+    return auto_priority_order(entries)
+
+
 def condition_categories_present(entry: Entry) -> set:
     """A coarse fingerprint of *which kinds* of condition an entry uses,
     ignoring the specific values. Used to detect "entry B's requirements
