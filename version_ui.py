@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import webbrowser
 
-BUILD_VERSION = "v0.1.7.0"
+BUILD_VERSION = "v0.1.7.1"
 REPOSITORY_URL = "https://github.com/pablocbamorim/rm-songpack-maker"
 README_URL = f"{REPOSITORY_URL}#readme"
 
@@ -16,8 +16,6 @@ def install(app):
         help_menu_name = menu.entrycget(help_index, "menu")
         help_menu = app.nametowidget(help_menu_name)
 
-        # Keep the existing help action, but make the build version visible
-        # directly on the Help menu button.
         menu.entryconfigure(help_index, label=f"Help ({BUILD_VERSION})")
 
         help_menu.add_separator()
@@ -30,6 +28,4 @@ def install(app):
             command=lambda: webbrowser.open(REPOSITORY_URL),
         )
     except Exception:
-        # The version indicator and external links are cosmetic; never prevent
-        # the application from starting if a platform-specific Tk menu behaves differently.
         pass
