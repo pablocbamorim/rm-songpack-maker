@@ -36,13 +36,13 @@ from models import Songpack, Entry, BiomeCondition, DimensionCondition, BlockCon
 # ---------------------------------------------------------------------------
 # Tab 1: Songpack Info
 # ---------------------------------------------------------------------------
-class InfoTab(ttk.Frame):
+class InfoTab(ctk.CTkFrame):
     def __init__(self, parent, app: "App"):
         super().__init__(parent)
         self.app = app
         pad = {"padx": 8, "pady": 5}
 
-        container = ttk.Frame(self)
+        container = ctk.CTkFrame(self)
         container.pack(anchor="nw", padx=10, pady=10)
 
         self.name_var = tk.StringVar()
@@ -70,95 +70,103 @@ class InfoTab(ttk.Frame):
         ]
         r = 0
         for label, var in text_rows:
-            ttk.Label(container, text=label + ":").grid(row=r,
-                                                        column=0, sticky="e", **pad)
-            ttk.Entry(container, textvariable=var, width=55).grid(
+            ctk.CTkLabel(container, text=label + ":").grid(
+                row=r, column=0, sticky="e", **pad)
+            ctk.CTkEntry(container, textvariable=var, width=55 * 8).grid(
                 row=r, column=1, sticky="w", **pad)
             r += 1
 
-        ttk.Label(container, text="Music Switch Speed:").grid(
+        ctk.CTkLabel(container, text="Music Switch Speed:").grid(
             row=r, column=0, sticky="e", **pad)
-        ttk.Combobox(container, textvariable=self.switch_var, values=C.MUSIC_SWITCH_SPEEDS,
-                     state="readonly", width=15).grid(row=r, column=1, sticky="w", **pad)
+        ctk.CTkComboBox(
+            container, variable=self.switch_var, values=C.MUSIC_SWITCH_SPEEDS,
+            width=15 * 8).grid(row=r, column=1, sticky="w", **pad)
         r += 1
 
-        ttk.Label(container, text="Music Delay Length:").grid(
+        ctk.CTkLabel(container, text="Music Delay Length:").grid(
             row=r, column=0, sticky="e", **pad)
-        ttk.Combobox(container, textvariable=self.delay_var, values=C.MUSIC_DELAY_LENGTHS,
-                     state="readonly", width=15).grid(row=r, column=1, sticky="w", **pad)
+        ctk.CTkComboBox(
+            container, variable=self.delay_var, values=C.MUSIC_DELAY_LENGTHS,
+            width=15 * 8).grid(row=r, column=1, sticky="w", **pad)
         r += 1
 
         # ---- target mod build -------------------------------------------
-        ttk.Separator(container, orient="horizontal").grid(
+        ctk.CTkFrame(container, height=2).grid(
             row=r, column=0, columnspan=2, sticky="ew", padx=8, pady=(10, 4))
         r += 1
-        ttk.Label(container, text="Target build (editor only — not written to the YAML)",
-                  font=("", 9, "bold")).grid(row=r, column=1, sticky="w", padx=8)
+        ctk.CTkLabel(
+            container, text="Target build (editor only — not written to the YAML)",
+            font=("", 9, "bold")).grid(row=r, column=1, sticky="w", padx=8)
         r += 1
 
-        ttk.Label(container, text="Minecraft Version:").grid(
+        ctk.CTkLabel(container, text="Minecraft Version:").grid(
             row=r, column=0, sticky="e", **pad)
-        mc_row = ttk.Frame(container)
+        mc_row = ctk.CTkFrame(container)
         mc_row.grid(row=r, column=1, sticky="w", **pad)
-        ttk.Combobox(mc_row, textvariable=self.mc_var, values=mod_versions.MC_CHOICES,
-                     width=22).pack(side="left")
-        ttk.Label(mc_row, text="(you can also type a version that isn't listed)",
-                  foreground="#666").pack(side="left", padx=(8, 0))
+        ctk.CTkComboBox(
+            mc_row, variable=self.mc_var, values=mod_versions.MC_CHOICES,
+            width=22 * 8).pack(side="left")
+        ctk.CTkLabel(
+            mc_row, text="(you can also type a version that isn't listed)",
+            text_color="#666").pack(side="left", padx=(8, 0))
         r += 1
 
-        ttk.Label(container, text="Reactive Music Version:").grid(
+        ctk.CTkLabel(container, text="Reactive Music Version:").grid(
             row=r, column=0, sticky="e", **pad)
-        mod_row = ttk.Frame(container)
+        mod_row = ctk.CTkFrame(container)
         mod_row.grid(row=r, column=1, sticky="w", **pad)
-        ttk.Combobox(
-            mod_row, textvariable=self.mod_version_var,
+        ctk.CTkComboBox(
+            mod_row, variable=self.mod_version_var,
             values=[mod_versions.MOD_VERSION_AUTO] +
             mod_versions.KNOWN_MOD_VERSIONS,
-            width=22,
+            width=22 * 8,
         ).pack(side="left")
         r += 1
-        self.resolved_label = ttk.Label(
-            container, text="", foreground="#666", justify="left", wraplength=520)
+        self.resolved_label = ctk.CTkLabel(
+            container, text="", text_color="#666", justify="left", wraplength=520)
         self.resolved_label.grid(row=r, column=1, sticky="w", padx=8)
         r += 1
 
-        ttk.Label(container, text="Mod Platform:").grid(
+        ctk.CTkLabel(container, text="Mod Platform:").grid(
             row=r, column=0, sticky="e", **pad)
-        ttk.Combobox(container, textvariable=self.platform_var,
-                     values=mod_versions.PLATFORM_CHOICES, state="readonly",
-                     width=22).grid(row=r, column=1, sticky="w", **pad)
+        ctk.CTkComboBox(
+            container, variable=self.platform_var,
+            values=mod_versions.PLATFORM_CHOICES, width=22 * 8,
+        ).grid(row=r, column=1, sticky="w", **pad)
         r += 1
-        ttk.Label(container, text=mod_versions.PLATFORM_NOTE,
-                  foreground="#666", justify="left").grid(row=r, column=1, sticky="w", padx=8)
+        ctk.CTkLabel(
+            container, text=mod_versions.PLATFORM_NOTE,
+            text_color="#666", justify="left").grid(
+                row=r, column=1, sticky="w", padx=8)
         r += 1
 
         for var in (self.mc_var, self.mod_version_var, self.platform_var):
             var.trace_add("write", lambda *_: self._on_target_changed())
 
-        ttk.Separator(container, orient="horizontal").grid(
+        ctk.CTkFrame(container, height=2).grid(
             row=r, column=0, columnspan=2, sticky="ew", padx=8, pady=(10, 4))
         r += 1
 
-        ttk.Label(container, text="Entries root key:").grid(
+        ctk.CTkLabel(container, text="Entries root key:").grid(
             row=r, column=0, sticky="e", **pad)
-        ttk.Entry(container, textvariable=self.root_key_var,
-                  width=20).grid(row=r, column=1, sticky="w", **pad)
+        ctk.CTkEntry(container, textvariable=self.root_key_var,
+                     width=20 * 8).grid(row=r, column=1, sticky="w", **pad)
         r += 1
-        ttk.Label(
+        ctk.CTkLabel(
             container,
             text=("Auto-detected when you load an existing file. MAKING_SONGPACKS.md doesn't\n"
                   "show this key explicitly, so only change it if your installed mod version\n"
                   "expects something other than the default ('entries')."),
-            foreground="#666", justify="left",
+            text_color="#666", justify="left",
         ).grid(row=r, column=1, sticky="w", padx=8)
         r += 1
 
-        ttk.Button(self, text="Apply changes", command=self._apply_clicked).pack(
+        ctk.CTkButton(self, text="Apply changes", command=self._apply_clicked).pack(
             anchor="w", padx=10, pady=(0, 10))
-        ttk.Label(
+        ctk.CTkLabel(
             self,
             text="(Changes here are also applied automatically when you switch tabs or save.)",
-            foreground="#666",
+            text_color="#666",
         ).pack(anchor="w", padx=10)
 
     def _apply_clicked(self):
@@ -190,7 +198,7 @@ class InfoTab(ttk.Frame):
     def refresh_resolved_label(self):
         _version, explanation = mod_versions.resolve(
             self.mc_var.get(), self.mod_version_var.get())
-        self.resolved_label.config(text=explanation)
+        self.resolved_label.configure(text=explanation)
 
     def push_from_pack(self):
         p = self.app.pack
