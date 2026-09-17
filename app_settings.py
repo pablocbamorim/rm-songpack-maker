@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import json
 import os
+import tkinter as tk
+from tkinter import ttk
 
 import customtkinter as ctk
 
@@ -62,6 +64,125 @@ def save(settings: dict) -> None:
     os.replace(tmp, SETTINGS_PATH)
 
 
-def apply_theme(_app, dark: bool = True) -> None:
-    """Delegate appearance switching to CustomTkinter."""
-    ctk.set_appearance_mode("dark" if dark else "light")
+# ---------------------------------------------------------------------------
+# ttk theming bridge
+#
+# CustomTkinter's appearance mode does not reach plain ttk widgets, and the
+# editor deliberately keeps three ttk.Treeviews (song list, priority order,
+# biome colors) because CTk has no equivalent. This maps CTk's own theme
+# colors onto ttk styles so the two halves match.
+# ---------------------------------------------------------------------------
+
+def _mode_color(value, dark: bool):
+    """CTk theme values are either a single color or [light, dark]."""
+    if isinstance(value, (list, tuple)):
+        return value[1 if dark else 0]
+    return value
+
+
+def treeview_palette(dark: bool) -> dict:
+    """Pull the relevant colors out of CustomTkinter's active theme so the
+    Treeviews track whatever color theme is set, not a hardcoded palette.
+    """
+    theme = ctk.ThemeManager.theme
+    frame = theme["CTkFrame"]
+    button = theme["CTkButton"]
+    label = theme["CTkLabel"]
+
+    text = _mode_color(label.get("text_color", ["gray10", "gray90"]), dark)
+    return {
+        "background": _mode_color(frame["fg_color"], dark),
+        "foreground": text,
+        "heading_bg": _mode_color(frame.get("top_fg_color", frame["fg_color"]), dark),
+        "heading_fg": text,
+        "heading_active": _mode_color(button["hover_color"], dark),
+        "selected_bg": _mode_color(button["fg_color"], dark),
+        "selected_fg": _mode_color(button.get("text_color", "#ffffff"), dark),
+        "border": _mode_color(frame["border_color"], dark),
+        "muted": "gray70" if dark else "gray40",
+    }
+
+
+def apply_ttk_theme(widget, dark: bool = True) -> None:
+    """Restyle every ttk widget in the app to match the current CTk
+    appearance mode. Safe to call as often as you like.
+    """
+    style = ttk.Style(widget)
+
+    # 'vista'/'xpnative' (Windows default) and 'aqua' (macOS) ignore
+    # background/fieldbackground on Treeview. 'clam' honours them.
+    if style.theme_use() not in ("clam", "alt", "default"):
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+
+    p = treeview_palette(dark)
+
+    style.configure(
+        "Treeview",
+        background=p["background"],
+        fieldbackground=p["background"],
+        foreground=p["foreground"],
+        bordercolor=p["border"],
+        borderwidth=0,
+        rowheight=24,
+    )
+    style.map(
+        "Treeview",
+        background=[("selected", p["selected_bg"])],
+        foreground=[("selected", p["selected_fg"])],
+    )
+    style.configure(
+        "Treeview.Heading",
+        background=p["heading_bg"],
+        foreground=p["heading_fg"],
+        relief="flat",
+        borderwidth=0,
+        padding=(6, 4),
+    )
+    style.map(
+        "Treeview.Heading",
+        background=[("active", p["heading_active"])],
+    )
+    style.layout("Treeview", [
+        ("Treeview.treearea", {"sticky": "nswe"}),  # drop the sunken border
+    ])
+
+    # --- surrounding ttk widgets (temporary: steps 5 & 6 replace most of
+    # these with CTk equivalents, at which point these rules can go) ------
+    style.configure("TFrame", background=p["background"])
+    style.configure("TLabel", background=p["background"],
+                    foreground=p["foreground"])
+    style.configure("Muted.TLabel", background=p["background"],
+                    foreground=p["muted"])
+    style.configure("TLabelframe", background=p["background"],
+                    bordercolor=p["border"])
+    style.configure("TLabelframe.Label", background=p["background"],
+                    foreground=p["foreground"])
+    style.configure("TCheckbutton", background=p["background"],
+                    foreground=p["foreground"])
+    style.map("TCheckbutton", background=[("active", p["background"])])
+    style.configure("TButton", background=p["heading_bg"],
+                    foreground=p["foreground"], borderwidth=0, padding=(8, 4))
+    style.map("TButton", background=[("active", p["heading_active"])])
+    style.configure("TEntry", fieldbackground=p["background"],
+                    foreground=p["foreground"], bordercolor=p["border"])
+    style.configure("Vertical.TScrollbar", background=p["heading_bg"],
+                    troughcolor=p["background"], bordercolor=p["border"],
+                    arrowcolor=p["foreground"])
+
+    _restyle_classic_widgets(widget, p)
+
+
+def _restyle_classic_widgets(widget, palette: dict) -> None:
+    """ttk.Style can't reach plain tk widgets (Canvas, Text, Menu), so walk
+    the tree and set their colors directly.
+    """
+    for child in widget.winfo_children():
+        try:
+            if isinstance(child, tk.Label):  # e.g. the color swatch
+                child.configure(bg=child.cget("bg") or palette["background"])
+        except tk.TclError:
+            pass
+        _restyle_classic_widgets(child, palette)
