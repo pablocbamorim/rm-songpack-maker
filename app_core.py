@@ -156,11 +156,93 @@ def _configure_ttk_typography(root: tk.Misc, dark: bool = True) -> None:
     style.configure("Title.TLabel",   font=_TITLE)
     style.configure("Small.TLabel",   font=_SMALL)
     style.configure("Status.TLabel",  font=_SMALL)
+# ---------------------------------------------------------------------------
+# Smoother wheel scrolling for CTkScrollableFrame
+# ---------------------------------------------------------------------------
 
+
+class _SmoothScrollFrame(ctk.CTkScrollableFrame):
+    """CTkScrollableFrame with smoother, slightly faster mouse-wheel scrolling.
+
+    CTk's built-in handler does ``canvas.yview_scroll(int(-delta/120), 'units')``
+    against a canvas whose ``yscrollincrement`` is left at Tk's default of 0,
+    which makes "one unit" equal 1/10 of the visible canvas height. The wheel
+    jump therefore changes size with the window, and on macOS (where delta is
+    a small integer, not a multiple of 120) ``int(delta/120)`` collapses to 0
+    so nothing scrolls at all.
+
+    Reimplementing ``_mouse_wheel_all`` in a subclass fixes both issues:
+
+      * ``__init__`` pins the canvas scroll unit to 1 pixel, so
+        ``yview_scroll(N, 'units')`` moves exactly N pixels.
+      * The wheel handler normalises the platform delta and scrolls a fixed
+        pixel amount per notch, which is consistent across window sizes and
+        reads as smoother, with a small speed bump over the old default.
+
+    Nested-scrollable behaviour is preserved: the mouse-over check is still
+    delegated to CTk's own helper, so a nested CTkScrollableFrame keeps
+    handling its own wheel events.
+    """
+
+    #: Pixels moved per wheel notch (Windows/X11 delta is 120 per notch).
+    _PIXELS_PER_NOTCH = 60
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        canvas = getattr(self, "_parent_canvas", None)
+        if canvas is not None:
+            try:
+                canvas.configure(yscrollincrement=1)
+            except Exception:
+                pass
+
+    def _mouse_wheel_all(self, event):  # noqa: D401 - override of CTk hook
+        # CTk binds ``self._mouse_wheel_all`` in its own __init__; because
+        # we're a subclass, the inherited binding picks up this override
+        # automatically -- no monkeypatching, no risk of tearing down
+        # unrelated bind_all handlers.
+        checker = (getattr(self, "_check_if_mouse_is_over_this_widget", None)
+                   or getattr(self, "check_if_mouse_is_over_this_widget", None))
+        if checker is not None:
+            try:
+                if not checker():
+                    return
+            except Exception:
+                pass
+
+        canvas = getattr(self, "_parent_canvas", None)
+        if canvas is None:
+            return
+        try:
+            if canvas.yview() == (0.0, 1.0):
+                return
+        except Exception:
+            return
+
+        delta = getattr(event, "delta", 0)
+        if not delta:
+            return
+
+        # Windows / X11 send +/-120 per notch. macOS sends small integers
+        # (often +/-1..+/-10) that are not multiples of 120; treating those
+        # directly as notches keeps trackpads responsive.
+        if abs(delta) >= 100:
+            notches = delta / 120.0
+        else:
+            notches = float(delta)
+        pixels = int(-notches * self._PIXELS_PER_NOTCH)
+        if pixels == 0:
+            pixels = -1 if delta > 0 else 1
+        try:
+            canvas.yview_scroll(pixels, "units")
+        except Exception:
+            pass
 
 # ---------------------------------------------------------------------------
 # Shared editor helpers
 # ---------------------------------------------------------------------------
+
+
 def _section(parent, title: str, compact: bool = False):
     """CTk has no LabelFrame. This builds the visual equivalent -- a
     rounded CTkFrame "card" with a bold section header -- and returns the
@@ -558,6 +640,10 @@ class LibraryTab(ctk.CTkFrame):
         # _on_select() doesn't rebuild the condition editor in response to
         # a purely internal refresh. See _on_select for the full story.
         self._suppress_select_rebuild = False
+        # Ids of the entries the editor is currently displaying. Used to
+        # skip redundant rebuilds when Tk re-emits <<TreeviewSelect>> for
+        # the same selection (e.g. the second click of a double-click).
+        self._editor_showing_ids: frozenset = frozenset()
 
         # ---- left: entry list -------------------------------------------------
         left = ctk.CTkFrame(self, corner_radius=10)
@@ -646,7 +732,7 @@ class LibraryTab(ctk.CTkFrame):
         self.editor_outer = ctk.CTkFrame(self.right, fg_color="transparent")
         self.editor_outer.pack(fill="both", expand=True, padx=6, pady=(4, 8))
 
-        self.editor_frame = ctk.CTkScrollableFrame(
+        self.editor_frame = _SmoothScrollFrame(
             self.editor_outer, fg_color="transparent")
         self.editor_frame.pack(fill="both", expand=True)
 
@@ -774,6 +860,14 @@ class LibraryTab(ctk.CTkFrame):
         if self._suppress_select_rebuild:
             return
 
+        # If the resolved selection is exactly what the editor is already
+        # showing, don't destroy and rebuild every widget. This is what
+        # makes the second click of a double-click stop re-rendering the
+        # editor while the <Double-1> preview handler runs.
+        new_ids = frozenset(e.id for e in entries)
+        if new_ids and new_ids == self._editor_showing_ids:
+            return
+
         if len(entries) == 1:
             self.editor_title.configure(
                 text=f"Conditions for: {entries[0].display_name()}")
@@ -844,7 +938,7 @@ class LibraryTab(ctk.CTkFrame):
         the original ttk.Checkbutton: clicking an all-on option turns it
         off for the whole selection; clicking anything else turns it on.
         """
-        if state == "on":
+        if state == "all":
             text = "\u2611 " + label            # ☑
             fg = ("#3B8ED0", "#1F6AA5")
             hover = ("#36719F", "#144870")
@@ -870,6 +964,7 @@ class LibraryTab(ctk.CTkFrame):
         return btn
 
     def _build_multi_editor_for(self, entries):
+        self._editor_showing_ids = frozenset(e.id for e in entries)
         for w in self.editor_frame.winfo_children():
             w.destroy()
 
@@ -965,6 +1060,7 @@ class LibraryTab(ctk.CTkFrame):
         ).pack(anchor="w", padx=10, pady=(6, 8))
 
     def _clear_editor(self, message):
+        self._editor_showing_ids = frozenset()
         for w in self.editor_frame.winfo_children():
             w.destroy()
         ctk.CTkLabel(
@@ -1142,6 +1238,7 @@ class LibraryTab(ctk.CTkFrame):
 
     # -- editor construction -------------------------------------------------
     def _build_editor_for(self, entry: Entry):
+        self._editor_showing_ids = frozenset([entry.id])
         for w in self.editor_frame.winfo_children():
             w.destroy()
         self.category_vars = {}
