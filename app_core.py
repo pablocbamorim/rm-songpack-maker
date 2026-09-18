@@ -726,6 +726,15 @@ class LibraryTab(ctk.CTkFrame):
         )
         self.edit_songs_btn.pack(side="right", padx=(0, 6))
 
+        # Opens the basic waveform/trim editor for the selected song's
+        # audio file (audio_editor.py). Same single-selection rule as
+        # "Edit songs…" -- see _update_edit_songs_btn().
+        self.edit_audio_btn = ctk.CTkButton(
+            header, text="Edit audio…", width=110, font=_BODY,
+            state="disabled", command=self._edit_audio_clicked,
+        )
+        self.edit_audio_btn.pack(side="right", padx=(0, 6))
+
         # editor_outer stays as a plain container so _toggle_editor() and
         # App.on_target_changed()/on_biome_colors_changed() can keep using
         # pack_forget()/winfo_ismapped() exactly as before.
@@ -880,14 +889,15 @@ class LibraryTab(ctk.CTkFrame):
                 self._build_multi_editor_for(entries)
 
     def _update_edit_songs_btn(self):
-        """The 'Edit songs…' action only makes sense for a single entry.
-        Keep it disabled during multi-selection or when nothing is selected.
+        """The 'Edit songs…' and 'Edit audio…' actions only make sense for
+        a single entry. Keep them disabled during multi-selection or when
+        nothing is selected.
         """
         sel = self.tree.selection()
-        if len(sel) == 1 and self.tree.exists(sel[0]):
-            self.edit_songs_btn.configure(state="normal")
-        else:
-            self.edit_songs_btn.configure(state="disabled")
+        state = "normal" if len(sel) == 1 and self.tree.exists(
+            sel[0]) else "disabled"
+        self.edit_songs_btn.configure(state=state)
+        self.edit_audio_btn.configure(state=state)
 
     # -- multi-edit state helpers ------------------------------------------
     def _option_state(self, entries, cat, opt):
@@ -1267,6 +1277,38 @@ class LibraryTab(ctk.CTkFrame):
         if entry is None:
             return
         self._open_songs_dialog(entry)
+
+    # -- audio editor ---------------------------------------------------------
+    def _edit_audio_clicked(self):
+        """Open the waveform/trim editor for the selected entry's audio.
+
+        ui_enhancements.install() publishes app.action_edit_audio (which
+        also knows how to resolve the file through its own preview
+        helper); this falls back to calling the editor directly so the
+        button still works when the enhancement isn't installed.
+        """
+        sel = self.tree.selection()
+        if len(sel) != 1:
+            return
+        entry = next(
+            (e for e in self.app.pack.entries if e.id == sel[0]), None)
+        if entry is None:
+            return
+
+        action = getattr(self.app, "action_edit_audio", None)
+        if callable(action):
+            action()
+            return
+        try:
+            import audio_editor  # imported lazily: optional dependency
+        except ImportError as exc:
+            messagebox.showerror(
+                "Audio editor unavailable",
+                "The audio editor needs the 'soundfile' and 'numpy' packages.\n\n"
+                "Install them with:\n    python -m pip install -r requirements.txt\n\n"
+                f"Import error: {exc}")
+            return
+        audio_editor.open_audio_editor(self.app, entry)
 
     def _open_songs_dialog(self, entry: Entry):
         """Small dialog for editing the entry's underlying song list. The

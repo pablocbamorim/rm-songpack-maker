@@ -4,14 +4,25 @@ Theming and user preferences moved to app_settings.py + the Settings tab
 (settings_tab.py); this module now only adds behaviour: filename
 normalisation when scanning a music folder, save verification, and the
 audio preview controls.
+
+The preview controls no longer drive pygame directly. Playback state lives
+in audio_preview.PreviewPlayer, a single shared object also used by the
+audio editor (audio_editor.py) -- pygame's music channel is global, so two
+separate state machines would immediately disagree the moment either one
+started playing. The button text here follows the shared player through a
+listener, which is what makes it fall back to "Preview song" when the
+editor takes the channel over.
 """
 from __future__ import annotations
 
 import os
 import re
 import unicodedata
+import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+import audio_io
+import audio_preview
 import yaml_io
 from models import Entry
 
@@ -119,65 +130,114 @@ def install(app):
     app.action_load_music_folder = load_music_folder
     app.action_save_config = save_config
 
-    try:
-        import pygame
-    except ImportError:
-        pygame = None
+    # ---- audio preview ---------------------------------------------------
+    # One shared player for the song list and the audio editor.
+    player = audio_preview.get_player()
+    player.set_volume(settings.get("preview_volume", 1.0))
 
-    preview = {"path": None, "paused": False}
+    # What the *song list* last asked to play. The player may be playing
+    # something else entirely (the editor's trimmed clip), in which case
+    # these buttons must not claim it as theirs.
+    library_preview = {"path": None}
+
+    def resolve_entry_path(entry):
+        """The audio file backing an entry's primary song, or None.
+
+        Exposed on the app (below) so the audio editor can reuse exactly
+        this lookup instead of reimplementing it.
+        """
+        folder = getattr(app, "music_source_folder", None)
+        if not entry or not entry.songs or not folder:
+            return None
+        return audio_io.resolve_song_path(
+            folder, entry.songs[0], yaml_io.AUDIO_EXTENSIONS)
 
     def resolve_selected_path():
         sel = app.library_tab.tree.selection()
-        if not sel or not app.music_source_folder:
+        if not sel:
             return None
         entry = next((e for e in app.pack.entries if e.id == sel[0]), None)
-        if not entry or not entry.songs:
-            return None
-        stem = entry.songs[0]
-        for ext in yaml_io.AUDIO_EXTENSIONS:
-            path = os.path.join(app.music_source_folder, stem + ext)
-            if os.path.isfile(path):
-                return path
-        return None
+        return resolve_entry_path(entry)
+
+    def update_preview_button(*_args):
+        """Keep the button text in sync with the shared player, whoever
+        changed it.
+        """
+        path = library_preview["path"]
+        try:
+            if path and player.is_current(path):
+                if player.is_playing():
+                    preview_button.config(text="Pause song")
+                    return
+                if player.is_paused():
+                    preview_button.config(text="Resume song")
+                    return
+            library_preview["path"] = None
+            preview_button.config(text="Preview song")
+        except tk.TclError:  # window is going away
+            pass
 
     def play_pause():
-        path = resolve_selected_path()
-        if pygame is None:
+        if not player.available():
             messagebox.showerror(
                 "Preview unavailable", "Install the preview dependency with: pip install pygame")
             return
+
+        path = library_preview["path"]
+        if path and player.is_current(path) and not player.is_playing() \
+                and not player.is_paused():
+            # It finished on its own since the last click.
+            path = None
+
+        if path and player.is_current(path):
+            if player.is_playing():
+                player.pause()
+            elif player.is_paused():
+                player.resume()
+            update_preview_button()
+            return
+
+        path = resolve_selected_path()
+        if not path:
+            messagebox.showinfo(
+                "Preview", "Select a song from the list and make sure its music folder is loaded.")
+            return
         try:
-            if not pygame.mixer.get_init():
-                pygame.mixer.init()
-            if preview["path"] == path and pygame.mixer.music.get_busy():
-                pygame.mixer.music.pause()
-                preview["paused"] = True
-                preview_button.config(text="Resume song")
-                return
-            if preview["path"] == path and preview["paused"]:
-                pygame.mixer.music.unpause()
-                preview["paused"] = False
-                preview_button.config(text="Pause song")
-                return
-            if not path:
-                messagebox.showinfo(
-                    "Preview", "Select a song from the list and make sure its music folder is loaded.")
-                return
-            pygame.mixer.music.load(path)
-            pygame.mixer.music.play()
-            preview["path"] = path
-            preview["paused"] = False
-            preview_button.config(text="Pause song")
-            app.set_status(f"Previewing {os.path.basename(path)}")
-        except Exception as exc:
+            player.play(path, volume=settings.get("preview_volume", 1.0))
+        except audio_preview.PreviewError as exc:
             messagebox.showerror("Preview failed", str(exc))
+            return
+        library_preview["path"] = path
+        update_preview_button()
+        app.set_status(f"Previewing {os.path.basename(path)}")
 
     def stop_preview():
-        if pygame is not None and pygame.mixer.get_init():
-            pygame.mixer.music.stop()
-        preview["path"] = None
-        preview["paused"] = False
-        preview_button.config(text="Preview song")
+        if library_preview["path"] and player.is_current(library_preview["path"]):
+            player.stop()
+        library_preview["path"] = None
+        update_preview_button()
+
+    def edit_audio():
+        """Open the audio editor for the selected song."""
+        sel = app.library_tab.tree.selection()
+        if len(sel) != 1:
+            messagebox.showinfo(
+                "Audio editor", "Select exactly one song to edit its audio.")
+            return
+        entry = next((e for e in app.pack.entries if e.id == sel[0]), None)
+        if entry is None:
+            return
+        try:
+            import audio_editor
+        except ImportError as exc:
+            messagebox.showerror("Audio editor unavailable", str(exc))
+            return
+        audio_editor.open_audio_editor(app, entry)
+
+    # Used by app_core's "Edit audio…" button and by audio_editor itself.
+    app.resolve_entry_audio_path = resolve_entry_path
+    app.audio_preview = player
+    app.action_edit_audio = edit_audio
 
     # Put the controls directly under the song list, where they are visible
     # regardless of how the condition editor is sized.
@@ -196,9 +256,21 @@ def install(app):
             library, text="Preview song", command=play_pause)
         preview_button.pack(side="bottom")
 
+    def on_player_state(_state, _path):
+        update_preview_button()
+
+    player.add_listener(on_player_state)
+
     def on_tree_double_click(_event=None):
         if settings.get("double_click_preview", False):
             play_pause()
 
     library.tree.bind("<Double-1>", on_tree_double_click, add="+")
-    app.bind("<Destroy>", lambda _e: stop_preview(), add="+")
+
+    def on_app_destroy(_event=None):
+        # The shared player outlives any single widget, so drop the
+        # listener along with the buttons it updates.
+        player.remove_listener(on_player_state)
+        stop_preview()
+
+    app.bind("<Destroy>", lambda _e: on_app_destroy(), add="+")

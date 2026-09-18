@@ -77,6 +77,9 @@ class Entry:
     # categories) is preserved verbatim here so nothing is lost on save.
     custom_raw_conditions: List[str] = field(default_factory=list)
 
+    fixed_combine: dict = field(default_factory=lambda: {
+        k: C.COMBINE_OR for k in C.FIXED_CATEGORY_ORDER})
+
     allow_fallback: bool = C.DEFAULT_ALLOW_FALLBACK
     force_stop_on_changed: bool = False
     force_stop_on_valid: bool = False

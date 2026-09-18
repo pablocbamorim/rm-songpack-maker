@@ -38,7 +38,12 @@ def build_events(entry: Entry) -> List[str]:
 
     for cat in C.FIXED_CATEGORY_ORDER:
         chosen = sorted(entry.selected.get(cat, set()))
-        if chosen:
+        if not chosen:
+            continue
+        combine = getattr(entry, "fixed_combine", {}).get(cat, C.COMBINE_OR)
+        if combine == C.COMBINE_AND:
+            events.extend(chosen)
+        else:
             events.append(_or_join(chosen))
 
     if entry.biomes:

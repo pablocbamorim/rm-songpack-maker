@@ -28,6 +28,10 @@ SETTINGS_PATH = os.path.join(SETTINGS_DIR, "settings.json")
 DEFAULTS = {
     "double_click_preview": False,
     "dark_theme": True,
+    # Preview playback gain (0.0-1.0). Shared by the song list's Preview
+    # button and the audio editor's volume slider; it only ever changes
+    # the output stream, never a file on disk.
+    "preview_volume": 1.0,
 }
 
 

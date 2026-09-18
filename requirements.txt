@@ -1,3 +1,11 @@
 PyYAML
 pygame
 customtkinter
+
+# Audio editor (waveform + trim + export). soundfile is a thin binding to
+# libsndfile; its PyPI wheels bundle libsndfile >= 1.1, which includes the
+# MPEG and Vorbis codecs, so mp3/ogg/wav/flac read *and* write work with no
+# ffmpeg or other external tool on the user's machine. numpy is soundfile's
+# array backend and is what the waveform peak scan is built on.
+soundfile>=0.12.1
+numpy>=1.22
