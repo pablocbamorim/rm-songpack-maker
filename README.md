@@ -5,35 +5,68 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/pablocbamorim/rm-songpack-maker/releases/tag/v0.1.5.0-alpha"><strong>Download for Windows</strong></a>
+  <a href="https://github.com/pablocbamorim/rm-songpack-maker/releases/tag/v0.1.8.0"><strong>Download for Windows</strong></a>
   &nbsp;|&nbsp;
   <a href="https://github.com/pablocbamorim/rm-songpack-maker/releases"><strong>View Releases</strong></a>
 </p>
 
-A desktop editor for creating and maintaining songpacks for the [ReactiveMusic](https://github.com/CircuitLord/ReactiveMusic) Minecraft mod.
+A graphical editor for creating songpacks for the [ReactiveMusic](https://github.com/CircuitLord/ReactiveMusic) Minecraft mod.
 
-ReactiveMusic songpacks contain a `ReactiveMusic.yaml` configuration file and a `music` folder with the audio files referenced by that configuration. This program provides a graphical interface for building that YAML instead of editing it by hand.
+ReactiveMusic songpacks are configured through a YAML file. You *can* write that YAML by hand, but it means keeping track of indentation, condition syntax, event support, entry priority, song filenames, and ReactiveMusic's many optional settings yourself. This editor turns that process into a GUI: select what you want, see what is available, and let the program generate the configuration for you.
 
-## What it does
+This is especially useful when a songpack grows beyond a few entries. Instead of manually maintaining a large YAML file, you can organize conditions and songs visually, reorder priorities, preview music, and get warnings when something looks wrong.
+
+## Features
+
+- Create and edit songpacks through a graphical interface instead of hand-writing YAML.
+- Import songs directly from a music folder and build entries from the detected audio files.
+- Configure ReactiveMusic conditions through structured controls, including biome, biome tags, dimensions, blocks, time, weather, and other events.
+- Manage custom biome and biome-tag definitions with visual colors.
+- Automatically suggest entry priority based on condition specificity, with manual reordering when needed.
+- Configure advanced playback behavior such as fallback, force stop/start, and force chance.
+- Search and filter entries and get warnings for potentially problematic configurations.
+
+<div align="center">
+  <table>
+    <tr>
+      <td align="center">
+        <b>First Image Title</b><br/>
+        <img src="assets/editorshowcase_1" width="400" alt="First Image"/>
+      </td>
+      <td align="center">
+        <b>Second Image Title</b><br/>
+        <img src="assets/editorshowcase_2" width="400" alt="Second Image"/>
+      </td>
+    </tr>
+  </table>
+</div>
+
+- Edit multiple songs at the same time
 
 <p align="center">
-  <img src="assets/showcase.png" alt="Soundpack Maker">
+  <img src="assets/multiselectshowcase.png" alt="Soundpack Maker">
 </p>
 
-The editor currently provides:
+- Preview songs
+- Trim and replace tracks as you wish
 
-- Songpack metadata editing: name, version, author, description, credits, music switch speed, and music delay length.
-- A target build picker (Minecraft version, Reactive Music version, mod platform). The mod version defaults to the newest release known for the selected Minecraft version, and the condition editor then only offers conditions that build actually supports.
-- Music-folder scanning for `.mp3`, `.ogg`, and `.wav` files.
-- Condition editing for ReactiveMusic's fixed event categories: special events, time, weather, world height, entities, actions, location, and combat.
-- Dynamic conditions including `BIOME=`, `BIOMETAG=`, `DIM=`, and `BLOCK=`.
-- Custom biome and biome-tag definitions with display colors.
-- Advanced entry behavior such as `allowFallback`, force-stop/start options, and `forceChance`.
-- Raw-condition editing for conditions the structured editor does not recognize.
-- Automatic rarity/specificity scoring and recommended priority ordering.
-- Manual priority reordering, search/filtering, and warnings for entries with no conditions.
+<p align="center">
+  <img src="assets/audioeditorshowcase.png" alt="Soundpack Maker">
+</p>
 
-The priority score is an editor-side heuristic. ReactiveMusic itself evaluates entries from top to bottom and uses the first matching entry.
+- Choose a target Minecraft / ReactiveMusic build so unsupported conditions are identified before saving.
+- Keep unsupported or custom conditions instead of losing them when editing a songpack.
+
+<p align="center">
+  <img src="assets/infotabshowcase.png" alt="Soundpack Maker">
+</p>
+
+## Coming soon
+
+- UI improvements and general workflow polish.
+- A biome condition editor based on a temperature/humidity chart, making it possible to select biomes visually and combine them with the same condition logic used elsewhere.
+- A dedicated songpack preview tab showing which songs can play for each biome, in priority order, with song previews and a simulation mode for testing playback at a chosen time of day.
+- More planned improvements to make building and testing songpacks faster and easier.
 
 ## Windows installation
 
@@ -230,12 +263,6 @@ The underlying ReactiveMusic format is YAML, so indentation and structure matter
 
 For the full ReactiveMusic songpack format, see the official [Making Songpacks documentation](https://github.com/CircuitLord/ReactiveMusic/blob/master/docs/MAKING_SONGPACKS.md).
 
-## Project version
-
-The editor uses a four-part version number in the form `0.x.y.z`: `z` is used for smaller fixes/iterations, `y` for a successfully completed larger feature, and `x` for a bundle of larger features.
-
-Current editor build: `0.1.7.1`.
-
 ## License and credits
 
 This tool is licensed under the **MIT License**. See [LICENSE](LICENSE).
@@ -243,5 +270,7 @@ This tool is licensed under the **MIT License**. See [LICENSE](LICENSE).
 Created by **Pablo Castelo Branco Amorim** (`pablocbamorim`).
 
 This program was **vibe-coded**: AI tools were used extensively to generate, modify, and debug the code, with the creator directing development and reviewing the resulting changes.
+Tho I did have to work hard to make this work, free LLMs suck :/
+Hope it's useful to someone else
 
 ReactiveMusic itself is developed by **CircuitLord**. This project is an independent editor for ReactiveMusic songpacks and is not affiliated with the upstream project.
