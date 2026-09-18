@@ -2028,17 +2028,13 @@ class App(ctk.CTk):
         self.title("ReactiveMusic Songpack Editor")
         self.minsize(900, 600)
 
-        # Start fitted to the screen without briefly showing the default
-        # 1120x760 window. Using explicit screen geometry here is more reliable
-        # than state("zoomed") while the Tk window is withdrawn: on Windows,
-        # Tk can leave a withdrawn window in a state where deiconify() makes it
-        # disappear again.
-        self.withdraw()
-        self.update_idletasks()
-        screen_w = self.winfo_screenwidth()
-        screen_h = self.winfo_screenheight()
-        self.geometry(f"{screen_w}x{screen_h}+0+0")
-        self.deiconify()
+        # Keep the native window manager state intact while hiding startup
+        # rendering. withdraw() + deiconify() can leave a Tk window
+        # withdrawn on Windows, which makes the process keep running while
+        # the GUI appears to have closed. A transparent window avoids that
+        # state transition entirely.
+        self.attributes("-alpha", 0.0)
+        self.geometry("1120x760")
 
         self.pack_data = Songpack()
         self.music_source_folder = None
@@ -2075,6 +2071,18 @@ class App(ctk.CTk):
 
         self.refresh_all()
         self.apply_theme()
+
+        # Maximize only after the complete UI has been constructed. The
+        # window is transparent during this operation, so the user never
+        # sees the intermediate 1120x760 frame or a maximize flash.
+        try:
+            self.state("zoomed")
+        except tk.TclError:
+            self.update_idletasks()
+            self.geometry(
+                f"{self.winfo_screenwidth()}x{self.winfo_screenheight()}+0+0"
+            )
+        self.after_idle(lambda: self.attributes("-alpha", 1.0))
 
     @property
     def pack(self) -> Songpack:
