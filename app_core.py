@@ -2028,19 +2028,16 @@ class App(ctk.CTk):
         self.title("ReactiveMusic Songpack Editor")
         self.minsize(900, 600)
 
-        # Configure the window while it is hidden so the normal-sized
-        # geometry is never painted first. On Windows, calling state("zoomed")
-        # on a visible Tk window can briefly show the 1120x760 window before
-        # maximizing it, which looks like a startup flash.
+        # Start fitted to the screen without briefly showing the default
+        # 1120x760 window. Using explicit screen geometry here is more reliable
+        # than state("zoomed") while the Tk window is withdrawn: on Windows,
+        # Tk can leave a withdrawn window in a state where deiconify() makes it
+        # disappear again.
         self.withdraw()
-        self.geometry("1120x760")
-        try:
-            self.state("zoomed")
-        except tk.TclError:
-            self.update_idletasks()
-            self.geometry(f"{self.winfo_screenwidth()}x{self.winfo_screenheight()}+0+0")
-
-        # Only show the window after its final startup geometry/state is set.
+        self.update_idletasks()
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        self.geometry(f"{screen_w}x{screen_h}+0+0")
         self.deiconify()
 
         self.pack_data = Songpack()
