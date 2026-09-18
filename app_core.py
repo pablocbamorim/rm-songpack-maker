@@ -2029,6 +2029,16 @@ class App(ctk.CTk):
         self.geometry("1120x760")
         self.minsize(900, 600)
 
+        # Start maximized (windowed fullscreen): the app fills the usable
+        # screen area while keeping the normal Windows title bar/taskbar.
+        # Fall back to a screen-sized geometry on platforms where Tk does
+        # not support the Windows ``zoomed`` state.
+        try:
+            self.state("zoomed")
+        except tk.TclError:
+            self.update_idletasks()
+            self.geometry(f"{self.winfo_screenwidth()}x{self.winfo_screenheight()}+0+0")
+
         self.pack_data = Songpack()
         self.music_source_folder = None
         self.current_save_folder = None
