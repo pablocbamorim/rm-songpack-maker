@@ -10,30 +10,30 @@
   <a href="https://github.com/pablocbamorim/rm-songpack-maker/releases"><strong>View Releases</strong></a>
 </p>
 
-A desktop editor for creating and maintaining songpacks for the [ReactiveMusic](https://github.com/CircuitLord/ReactiveMusic) Minecraft mod.
+A graphical editor for creating songpacks for the [ReactiveMusic](https://github.com/CircuitLord/ReactiveMusic) Minecraft mod.
 
-ReactiveMusic songpacks contain a `ReactiveMusic.yaml` configuration file and a `music` folder with the audio files referenced by that configuration. This program provides a graphical interface for building that YAML instead of editing it by hand.
+ReactiveMusic songpacks are configured through a YAML file. You *can* write that YAML by hand, but it means keeping track of indentation, condition syntax, event support, entry priority, song filenames, and ReactiveMusic's many optional settings yourself. This editor turns that process into a GUI: select what you want, see what is available, and let the program generate the configuration for you.
 
-## What it does
+This is especially useful when a songpack grows beyond a few entries. Instead of manually maintaining a large YAML file, you can organize conditions and songs visually, reorder priorities, preview music, and get warnings when something looks wrong.
 
-<p align="center">
-  <img src="assets/showcase.png" alt="Soundpack Maker">
-</p>
+## Features
 
-The editor currently provides:
+- Create and edit songpacks through a graphical interface instead of hand-writing YAML.
+- Import songs directly from a music folder and build entries from the detected audio files.
+- Configure ReactiveMusic conditions through structured controls, including biome, biome tags, dimensions, blocks, time, weather, and other events.
+- Choose a target Minecraft / ReactiveMusic build so unsupported conditions are identified before saving.
+- Manage custom biome and biome-tag definitions with visual colors.
+- Automatically suggest entry priority based on condition specificity, with manual reordering when needed.
+- Configure advanced playback behavior such as fallback, force stop/start, and force chance.
+- Keep unsupported or custom conditions instead of losing them when editing a songpack.
+- Search and filter entries and get warnings for potentially problematic configurations.
 
-- Songpack metadata editing: name, version, author, description, credits, music switch speed, and music delay length.
-- A target build picker (Minecraft version, Reactive Music version, mod platform). The mod version defaults to the newest release known for the selected Minecraft version, and the condition editor then only offers conditions that build actually supports.
-- Music-folder scanning for `.mp3`, `.ogg`, and `.wav` files.
-- Condition editing for ReactiveMusic's fixed event categories: special events, time, weather, world height, entities, actions, location, and combat.
-- Dynamic conditions including `BIOME=`, `BIOMETAG=`, `DIM=`, and `BLOCK=`.
-- Custom biome and biome-tag definitions with display colors.
-- Advanced entry behavior such as `allowFallback`, force-stop/start options, and `forceChance`.
-- Raw-condition editing for conditions the structured editor does not recognize.
-- Automatic rarity/specificity scoring and recommended priority ordering.
-- Manual priority reordering, search/filtering, and warnings for entries with no conditions.
+## Coming soon
 
-The priority score is an editor-side heuristic. ReactiveMusic itself evaluates entries from top to bottom and uses the first matching entry.
+- UI improvements and general workflow polish.
+- A biome condition editor based on a temperature/humidity chart, making it possible to select biomes visually and combine them with the same condition logic used elsewhere.
+- A dedicated songpack preview tab showing which songs can play for each biome, in priority order, with song previews and a simulation mode for testing playback at a chosen time of day.
+- More planned improvements to make building and testing songpacks faster and easier.
 
 ## Windows installation
 
