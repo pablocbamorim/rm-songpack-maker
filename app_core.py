@@ -57,32 +57,6 @@ _TINY = ("", 10)          # rare; used for very compact hints
 _TREE_ROW_HEIGHT = 30
 
 
-# ---------------------------------------------------------------------------
-# Emoji decoration for the fixed-condition checkboxes.
-#
-# Only Time / Weather / World Height options get emojis -- those are the
-# three groups where a quick visual cue genuinely helps scanning. The other
-# categories (Entities, Actions, Location, Combat) are already short and
-# unambiguous, so adding icons there would just be noise.
-# ---------------------------------------------------------------------------
-_OPTION_EMOJI = {
-    # Time
-    "DAY":     "\u2600\ufe0f",   # ☀️
-    "NIGHT":   "\U0001f319",     # 🌙
-    "SUNRISE": "\U0001f305",     # 🌅
-    "SUNSET":  "\U0001f307",     # 🌇
-    # Weather
-    "RAIN":    "\U0001f327\ufe0f",  # 🌧️
-    "SNOW":    "\u2744\ufe0f",      # ❄️
-    "STORM":   "\u26c8\ufe0f",      # ⛈️
-    # World Height
-    "UNDERWATER":        "\U0001f30a",     # 🌊
-    "UNDERGROUND":       "\u26cf\ufe0f",   # ⛏️
-    "DEEP_UNDERGROUND":  "\U0001f573\ufe0f",  # 🕳️
-    "HIGH_UP":           "\u26f0\ufe0f",   # ⛰️
-}
-
-
 def _configure_ttk_typography(root: tk.Misc, dark: bool = True) -> None:
     """Push the shared typography scale into every ttk widget class the app
     uses, and theme the ttk.Treeview so it doesn't stand out as a bright
@@ -1128,15 +1102,10 @@ class LibraryTab(ctk.CTkFrame):
         custom = self.app.biome_custom_tags if is_tag else self.app.biome_custom_biomes
         return custom.get(value, biome_customization.default_color(value, is_tag))
 
-    # -- option labels (emoji + gate suffix) -------------------------------
+    # -- option labels (gate suffix) ----------------------------------------
     def _option_label(self, opt: str, available: bool = True) -> str:
-        """The checkbox label for a single fixed option. Adds the category
-        emoji (Time/Weather/Height only) and, when the target build
-        predates this option, the human-readable gate suffix -- so the
-        disabled state is never a mystery.
-        """
-        emoji = _OPTION_EMOJI.get(opt)
-        text = f"{emoji}  {opt}" if emoji else opt
+        """Return the checkbox label for a single fixed option."""
+        text = opt
         if not available:
             text += self._gate_suffix(opt)
         return text
@@ -2075,14 +2044,27 @@ class App(ctk.CTk):
         # Maximize only after the complete UI has been constructed. The
         # window is transparent during this operation, so the user never
         # sees the intermediate 1120x760 frame or a maximize flash.
+        self.after(10, self._maximize_window)
+        self.after_idle(lambda: self.attributes("-alpha", 1.0))
+
+    def _maximize_window(self):
+        """Maximize to the current screen — same effect as clicking the
+        window's maximize button. Deferred by self.after(10, ...) in
+        __init__ because state('zoomed') can silently no-op if it runs
+        before the window has actually been mapped on screen.
+        """
         try:
             self.state("zoomed")
         except tk.TclError:
-            self.update_idletasks()
-            self.geometry(
-                f"{self.winfo_screenwidth()}x{self.winfo_screenheight()}+0+0"
-            )
-        self.after_idle(lambda: self.attributes("-alpha", 1.0))
+            pass
+
+        self.update_idletasks()
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        if self.winfo_width() < screen_w * 0.9 or self.winfo_height() < screen_h * 0.9:
+            # state("zoomed") didn't actually take -- fall back to sizing
+            # the window to the full screen by hand.
+            self.geometry(f"{screen_w}x{screen_h}+0+0")
 
     @property
     def pack(self) -> Songpack:
