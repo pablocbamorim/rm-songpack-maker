@@ -82,35 +82,6 @@ _OPTION_EMOJI = {
     "HIGH_UP":           "\u26f0\ufe0f",   # ⛰️
 }
 
-# Per-category column count for the compact fixed-condition grid.
-# Chosen so each category reads as a clean, efficient block without
-# letting a single long option push the layout off-screen at the app's
-# minimum window width. Short categories stay on one row; long ones
-# (Height, Entities) wrap cleanly.
-_FIXED_CATEGORY_COLUMNS = {
-    C.CATEGORY_SPECIAL:  3,
-    C.CATEGORY_TIME:     3,
-    C.CATEGORY_WEATHER:  3,
-    C.CATEGORY_HEIGHT:   2,
-    C.CATEGORY_ENTITIES: 3,
-    C.CATEGORY_ACTIONS:  2,
-    C.CATEGORY_LOCATION: 1,
-    C.CATEGORY_COMBAT:   1,
-}
-
-# Same idea, but for the multi-selection editor where each control is
-# wider (it carries a ☑/▣/☐ state glyph), so we wrap earlier.
-_FIXED_MULTI_COLUMNS = {
-    C.CATEGORY_SPECIAL:  2,
-    C.CATEGORY_TIME:     2,
-    C.CATEGORY_WEATHER:  2,
-    C.CATEGORY_HEIGHT:   1,
-    C.CATEGORY_ENTITIES: 2,
-    C.CATEGORY_ACTIONS:  1,
-    C.CATEGORY_LOCATION: 1,
-    C.CATEGORY_COMBAT:   1,
-}
-
 
 def _configure_ttk_typography(root: tk.Misc, dark: bool = True) -> None:
     """Push the shared typography scale into every ttk widget class the app
@@ -226,6 +197,129 @@ def _row(parent) -> ctk.CTkFrame:
     row = ctk.CTkFrame(parent, fg_color="transparent")
     row.pack(fill="x", padx=4, pady=2)
     return row
+
+
+def _entry_fixed_combine(entry) -> dict:
+    """Return a mutable ``{category: OR|AND}`` map for the entry's fixed
+    checkbox groups.
+
+    The canonical home for this is ``Entry.fixed_combine`` (see models.py),
+    but reading through this helper means the editor renders correctly even
+    when an older models.py that predates the field is still in use: the
+    field is created on the fly with the safe OR default. The actual
+    persistence/serialisation of the choice still requires the
+    models.py + condition_logic.py updates from the same patch series --
+    this helper only prevents the editor from coming up empty.
+    """
+    fc = getattr(entry, "fixed_combine", None)
+    if not isinstance(fc, dict):
+        fc = {k: C.COMBINE_OR for k in C.FIXED_CATEGORY_ORDER}
+        try:
+            entry.fixed_combine = fc
+        except Exception:
+            pass
+    else:
+        # Fill in any category that isn't represented yet so the UI can
+        # rely on .get() returning a real value.
+        for k in C.FIXED_CATEGORY_ORDER:
+            fc.setdefault(k, C.COMBINE_OR)
+    return fc
+
+
+def _flow_group(container, widgets, gap_x: int = 14, gap_y: int = 3):
+    """Lay out ``widgets`` inside ``container`` in a wrapping flow.
+
+    Widgets are placed left-to-right; when the next widget plus the
+    horizontal gap would exceed the container's current pixel width, a new
+    grid row is started. The layout is recomputed whenever the container
+    resizes, so the same code handles a wide default window and a narrow,
+    cramped one -- without a hard-coded column count per category.
+
+    Implementation notes (important for anyone touching this later):
+
+    * Widgets are gridded *directly* into ``container`` -- no reparenting.
+      CustomTkinter widgets don't take kindly to ``pack(in_=other)``.
+    * ``container.bind("<Configure>", ...)`` on a CTkFrame is routed to
+      the frame's internal canvas, so the handler must **not** guard on
+      ``event.widget is container`` -- the incoming event's widget is the
+      canvas, not the CTk frame. We therefore don't guard at all; a
+      re-entrancy flag + ``last_width`` cache keeps things safe.
+    * Reflow is synchronous inside the <Configure> handler. That keeps
+      the event loop responsive between two rapid clicks, which preserves
+      the Treeview's <Double-1> preview behaviour in ui_enhancements.
+    """
+    state = {"widths": None, "last_width": -1, "busy": False}
+
+    def _apply(width: int) -> None:
+        widths = state["widths"]
+        # Greedy row packing.
+        rows: list[list[int]] = [[]]
+        cur = 0
+        for i, ww in enumerate(widths):
+            if cur > 0 and cur + gap_x + ww > width:
+                rows.append([])
+                cur = 0
+            rows[-1].append(i)
+            cur += ww + gap_x
+
+        for w in widgets:
+            try:
+                w.grid_forget()
+            except tk.TclError:
+                pass
+        for r, row_indices in enumerate(rows):
+            for c, i in enumerate(row_indices):
+                try:
+                    widgets[i].grid(
+                        row=r, column=c, sticky="w",
+                        padx=(0, gap_x), pady=gap_y,
+                    )
+                except tk.TclError:
+                    pass
+
+    def _on_configure(_event=None) -> None:
+        if state["busy"]:
+            return
+        state["busy"] = True
+        try:
+            try:
+                width = int(container.winfo_width())
+            except (tk.TclError, ValueError):
+                return
+            if width <= 1 or width == state["last_width"]:
+                return
+            if state["widths"] is None:
+                # One-off measurement pass. CTk widgets expose their
+                # requested width through the standard Tk geometry API
+                # once the interpreter has processed pending idle tasks.
+                try:
+                    container.update_idletasks()
+                except tk.TclError:
+                    pass
+                widths = []
+                for w in widgets:
+                    try:
+                        widths.append(max(int(w.winfo_reqwidth()), 1))
+                    except tk.TclError:
+                        widths.append(1)
+                state["widths"] = widths
+            state["last_width"] = width
+            _apply(width)
+        finally:
+            state["busy"] = False
+
+    # Conservative initial layout (one per row) so nothing overflows the
+    # editor before the real width is known. The first <Configure> reflows
+    # this to the proper wrapping layout, and every subsequent resize
+    # reflows again.
+    for i, w in enumerate(widgets):
+        try:
+            w.grid(row=i, column=0, sticky="w",
+                   padx=(0, gap_x), pady=gap_y)
+        except tk.TclError:
+            pass
+
+    container.bind("<Configure>", _on_configure, add="+")
 
 
 # ---------------------------------------------------------------------------
@@ -457,6 +551,13 @@ class LibraryTab(ctk.CTkFrame):
         self.selected_entry_id = None
         self.selected_entry_ids: list[str] = []
         self.category_vars = {}  # cat -> {option: BooleanVar}
+        # cat -> StringVar tracking the fixed-category OR/AND combine
+        # mode currently displayed in the editor.
+        self.fixed_combine_vars: dict = {}
+        # Set while refresh_tree() re-sets the Treeview selection, so
+        # _on_select() doesn't rebuild the condition editor in response to
+        # a purely internal refresh. See _on_select for the full story.
+        self._suppress_select_rebuild = False
 
         # ---- left: entry list -------------------------------------------------
         left = ctk.CTkFrame(self, corner_radius=10)
@@ -477,6 +578,14 @@ class LibraryTab(ctk.CTkFrame):
                       fg_color=("#C24C4C", "#A03030"),
                       hover_color=("#A03030", "#7A2020"),
                       command=self._remove_selected).pack(side="left", padx=2)
+
+        # The collapse/expand control lives in the *left* panel so it stays
+        # reachable when the right-side editor is fully forgotten (which is
+        # how the collapsed state actually frees the horizontal space).
+        self.toggle_btn = ctk.CTkButton(
+            btn_row, text="▾ Hide editor", width=110, font=_BODY,
+            command=self._toggle_editor)
+        self.toggle_btn.pack(side="right", padx=2)
 
         # -- search box: filter the entry list by song name --
         search_row = ctk.CTkFrame(left, fg_color="transparent")
@@ -506,10 +615,14 @@ class LibraryTab(ctk.CTkFrame):
         # ui_enhancements adds a <Double-1> binding here with add="+".
 
         # ---- right: condition editor -------------------------------------------
-        right = ctk.CTkFrame(self, corner_radius=10)
-        right.pack(side="left", fill="both", expand=True, padx=(4, 8), pady=8)
+        # Stored as self.right so _toggle_editor() can pack_forget()/re-pack
+        # the entire panel -- that's what actually removes the editor's
+        # width from the layout when collapsed.
+        self.right = ctk.CTkFrame(self, corner_radius=10)
+        self.right.pack(side="left", fill="both", expand=True,
+                        padx=(4, 8), pady=8)
 
-        header = ctk.CTkFrame(right, fg_color="transparent")
+        header = ctk.CTkFrame(self.right, fg_color="transparent")
         header.pack(fill="x", padx=10, pady=(10, 4))
         self.editor_title = ctk.CTkLabel(
             header,
@@ -527,15 +640,10 @@ class LibraryTab(ctk.CTkFrame):
         )
         self.edit_songs_btn.pack(side="right", padx=(0, 6))
 
-        self.toggle_btn = ctk.CTkButton(
-            header, text="▾ Hide editor", width=110, font=_BODY,
-            command=self._toggle_editor)
-        self.toggle_btn.pack(side="right")
-
         # editor_outer stays as a plain container so _toggle_editor() and
         # App.on_target_changed()/on_biome_colors_changed() can keep using
         # pack_forget()/winfo_ismapped() exactly as before.
-        self.editor_outer = ctk.CTkFrame(right, fg_color="transparent")
+        self.editor_outer = ctk.CTkFrame(self.right, fg_color="transparent")
         self.editor_outer.pack(fill="both", expand=True, padx=6, pady=(4, 8))
 
         self.editor_frame = ctk.CTkScrollableFrame(
@@ -579,7 +687,17 @@ class LibraryTab(ctk.CTkFrame):
             )
         valid_prev = [iid for iid in prev if self.tree.exists(iid)]
         if valid_prev:
-            self.tree.selection_set(valid_prev)
+            # selection_set() fires <<TreeviewSelect>>; without this guard
+            # _on_select() would rebuild the condition editor every time
+            # this method runs (i.e. on every condition change), causing
+            # the editor to visibly flash. The selection itself hasn't
+            # actually changed from the user's point of view, so the
+            # rebuild is redundant.
+            self._suppress_select_rebuild = True
+            try:
+                self.tree.selection_set(valid_prev)
+            finally:
+                self._suppress_select_rebuild = False
 
     def _add_blank_entry(self):
         name = simpledialog.askstring(
@@ -644,12 +762,24 @@ class LibraryTab(ctk.CTkFrame):
 
         if len(entries) == 1:
             self.selected_entry_id = entries[0].id
+        elif len(entries) > 1:
+            self.selected_entry_id = None
+
+        # refresh_tree() re-sets the selection after rebuilding the list,
+        # which re-fires <<TreeviewSelect>>. The selected entry hasn't
+        # actually changed in that case, and the editor already reflects
+        # its current state -- so skip the (visibly expensive) rebuild to
+        # avoid the double/triple flash the user sees on every condition
+        # edit. Selection IDs above are still kept in sync.
+        if self._suppress_select_rebuild:
+            return
+
+        if len(entries) == 1:
             self.editor_title.configure(
                 text=f"Conditions for: {entries[0].display_name()}")
             if self.editor_outer.winfo_ismapped():
                 self._build_editor_for(entries[0])
         elif len(entries) > 1:
-            self.selected_entry_id = None
             self.editor_title.configure(
                 text=f"Editing {len(entries)} songs at once")
             if self.editor_outer.winfo_ismapped():
@@ -691,6 +821,14 @@ class LibraryTab(ctk.CTkFrame):
     def _apply_bool_to_all(self, entries, attr, turn_on):
         for e in entries:
             setattr(e, attr, turn_on)
+        self._refresh_after_multi_change(entries)
+
+    def _apply_combine_to_all(self, entries, cat, value):
+        """Multi-selection: apply the chosen OR/AND mode to every selected
+        entry's fixed-combine setting for one category, then rebuild.
+        """
+        for e in entries:
+            _entry_fixed_combine(e)[cat] = value
         self._refresh_after_multi_change(entries)
 
     def _refresh_after_multi_change(self, entries):
@@ -749,15 +887,35 @@ class LibraryTab(ctk.CTkFrame):
 
         for cat in C.FIXED_CATEGORY_ORDER:
             definition = C.FIXED_CATEGORIES[cat]
+
             body = _section(
                 self.editor_frame,
-                f"{definition['label']}  (checked options = OR)",
+                definition['label'],
                 compact=True,
             )
+
+            # Combine mode: multi-selection reflects the first entry's
+            # current choice, and changing it applies to all selected.
+            fc_first = _entry_fixed_combine(entries[0])
+            mode_var = tk.StringVar(value=fc_first.get(cat, C.COMBINE_OR))
+
+            combine_row = ctk.CTkFrame(body, fg_color="transparent")
+            combine_row.pack(fill="x", padx=4, pady=(0, 2))
+            ctk.CTkLabel(
+                combine_row, text="Combine checked options with:",
+                font=_SMALL, text_color=("gray40", "gray70"),
+            ).pack(side="left")
+            ctk.CTkSegmentedButton(
+                combine_row, values=[C.COMBINE_OR, C.COMBINE_AND],
+                variable=mode_var, font=_BODY,
+                command=lambda v, c=cat: self._apply_combine_to_all(
+                    entries, c, v),
+            ).pack(side="left", padx=8)
+
             grid = ctk.CTkFrame(body, fg_color="transparent")
             grid.pack(fill="x")
-            per_row = _FIXED_MULTI_COLUMNS.get(cat, 2)
-            for i, opt in enumerate(definition["options"]):
+            widgets = []
+            for opt in definition["options"]:
                 state = self._option_state(entries, cat, opt)
                 available = self._supports(opt)
                 label = self._option_label(opt, available)
@@ -770,9 +928,9 @@ class LibraryTab(ctk.CTkFrame):
                 btn = self._multi_state_button(
                     grid, label, state, on_click, enabled=enabled,
                 )
-                row, col = divmod(i, per_row)
-                btn.grid(row=row, column=col, sticky="w",
-                         padx=(0, 8), pady=1)
+                widgets.append(btn)
+            # Wrapping flow: as many per row as fit at the current width.
+            _flow_group(grid, widgets)
 
         adv_body = _section(
             self.editor_frame, "Advanced / Fallback Behaviour", compact=True)
@@ -818,15 +976,28 @@ class LibraryTab(ctk.CTkFrame):
         self._update_edit_songs_btn()
 
     def _toggle_editor(self):
-        if self.editor_outer.winfo_ismapped():
-            self.editor_outer.pack_forget()
-            self.toggle_btn.configure(text="▸ Show editor")
+        """Collapse/expand the right-hand condition editor.
+
+        When collapsed we forget the *entire* right panel (not just the
+        scroll area inside it), which is what actually hands the freed
+        horizontal space back to the left panel. The toggle button itself
+        lives in the left panel's button row so it stays reachable.
+        """
+        if self.right.winfo_ismapped():
+            # Collapse: drop the right panel entirely and let the left
+            # panel expand into the freed width.
+            self.right.pack_forget()
             self.left.pack_configure(fill="both", expand=True)
+            self.toggle_btn.configure(text="▸ Show editor")
         else:
-            self.editor_outer.pack(
-                fill="both", expand=True, padx=6, pady=(4, 8))
-            self.toggle_btn.configure(text="▾ Hide editor")
+            # Expand: put the left panel back to its natural width and
+            # re-attach the right panel. Rebuild the editor content for
+            # whatever entry is currently selected, since while collapsed
+            # _on_select() skipped the (invisible) rebuild.
             self.left.pack_configure(fill="y", expand=False)
+            self.right.pack(side="left", fill="both", expand=True,
+                            padx=(4, 8), pady=8)
+            self.toggle_btn.configure(text="▾ Hide editor")
 
             ids = self.selected_entry_ids
             entries = [e for e in self.app.pack.entries if e.id in set(ids)]
@@ -895,28 +1066,64 @@ class LibraryTab(ctk.CTkFrame):
             text_color=("gray40", "gray70"),
         ).pack(anchor="w", padx=8, pady=(6, 2))
 
-    def _build_fixed_categories(self, entry: Entry):
-        """The fixed checkbox groups, laid out in compact wrapping rows.
+    # -- fixed categories (with per-category OR/AND combine control) --------
+    def _set_fixed_combine(self, entry: Entry, cat: str, value: str):
+        """Single-entry editor: record the user's OR/AND choice for one
+        fixed category. This directly affects what ``build_events`` emits
+        on save, so it's a real functional setting, not a label.
+        """
+        _entry_fixed_combine(entry)[cat] = value
+        self._refresh_after_change(entry, rebuild=False)
 
-        Each category is still its own card so the section header stays
-        visually distinct, but the card uses the compact padding variant
-        and the options sit in a small grid -- one row for short groups,
-        two for longer ones (Height, Entities). Everything the target
-        build predates is disabled unless the entry already uses it, and
-        the gate suffix is still rendered.
+    def _build_fixed_categories(self, entry: Entry):
+        """The fixed checkbox groups.
+
+        Each category is its own compact card. Right under the header sits
+        a small OR/AND segmented control that decides how the checked
+        options in that category are combined in the generated ``events``
+        array:
+
+          * OR  -> one array item, options joined by " || "
+          * AND -> one array item per option (separate items are AND'd)
+
+        Below that, the options flow left-to-right and wrap onto additional
+        rows as the editor width allows. Options the target build predates
+        are disabled unless the entry already uses them, and the gate
+        suffix is still rendered.
         """
         for cat in C.FIXED_CATEGORY_ORDER:
             definition = C.FIXED_CATEGORIES[cat]
+
             body = _section(
                 self.editor_frame,
-                f"{definition['label']}  (checked options = OR)",
+                definition['label'],
                 compact=True,
             )
+
+            # -- OR/AND control for this category -----------------------
+            fc = _entry_fixed_combine(entry)
+            mode_var = tk.StringVar(value=fc.get(cat, C.COMBINE_OR))
+            self.fixed_combine_vars[cat] = mode_var
+
+            combine_row = ctk.CTkFrame(body, fg_color="transparent")
+            combine_row.pack(fill="x", padx=4, pady=(0, 2))
+            ctk.CTkLabel(
+                combine_row, text="Combine checked options with:",
+                font=_SMALL, text_color=("gray40", "gray70"),
+            ).pack(side="left")
+            ctk.CTkSegmentedButton(
+                combine_row, values=[C.COMBINE_OR, C.COMBINE_AND],
+                variable=mode_var, font=_BODY,
+                command=lambda v, e=entry, c=cat: self._set_fixed_combine(
+                    e, c, v),
+            ).pack(side="left", padx=8)
+
+            # -- checkbox flow -------------------------------------------
             grid = ctk.CTkFrame(body, fg_color="transparent")
             grid.pack(fill="x")
-            per_row = _FIXED_CATEGORY_COLUMNS.get(cat, 3)
             option_vars = {}
-            for i, opt in enumerate(definition["options"]):
+            widgets = []
+            for opt in definition["options"]:
                 already_set = opt in entry.selected.get(cat, set())
                 available = self._supports(opt)
                 var = tk.BooleanVar(value=already_set)
@@ -927,17 +1134,18 @@ class LibraryTab(ctk.CTkFrame):
                 )
                 if not available and not already_set:
                     check.configure(state="disabled")
-                row, col = divmod(i, per_row)
-                check.grid(row=row, column=col, sticky="w",
-                           padx=(0, 12), pady=1)
+                widgets.append(check)
                 option_vars[opt] = var
             self.category_vars[cat] = option_vars
+            # Wrapping flow: as many per row as fit at the current width.
+            _flow_group(grid, widgets)
 
     # -- editor construction -------------------------------------------------
     def _build_editor_for(self, entry: Entry):
         for w in self.editor_frame.winfo_children():
             w.destroy()
         self.category_vars = {}
+        self.fixed_combine_vars = {}
 
         # -- target banner --
         self._target_banner(self.editor_frame)
@@ -1538,10 +1746,17 @@ class LibraryTab(ctk.CTkFrame):
         if rebuild:
             self._build_editor_for(entry)
         else:
-            self.score_label.configure(
-                text=f"Rarity score: {priority.score_entry(entry)}   "
-                f"(higher = more specific = plays before broader/common entries)"
-            )
+            # `score_label` only exists once the priority section has been
+            # built. On the very first editor build for an entry this
+            # method can be reached (e.g. if a widget fires its command
+            # during construction) before that section exists -- guard
+            # against it so the editor never ends up half-built.
+            label = getattr(self, "score_label", None)
+            if label is not None:
+                label.configure(
+                    text=f"Rarity score: {priority.score_entry(entry)}   "
+                    f"(higher = more specific = plays before broader/common entries)"
+                )
         self.app.on_entry_conditions_changed(entry)
 
 
