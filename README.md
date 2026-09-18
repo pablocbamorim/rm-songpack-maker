@@ -26,20 +26,10 @@ This is especially useful when a songpack grows beyond a few entries. Instead of
 - Configure advanced playback behavior such as fallback, force stop/start, and force chance.
 - Search and filter entries and get warnings for potentially problematic configurations.
 
-<div align="center">
-  <table>
-    <tr>
-      <td align="center">
-        <b>First Image Title</b><br/>
-        <img src="assets/editorshowcase_1" width="400" alt="First Image"/>
-      </td>
-      <td align="center">
-        <b>Second Image Title</b><br/>
-        <img src="assets/editorshowcase_2" width="400" alt="Second Image"/>
-      </td>
-    </tr>
-  </table>
-</div>
+<p align="center">
+  <img src="assets/editorshowcase_1.png" width="45%" />
+  <img src="assets/editorshowcase_2.png" width="45%" />
+</p>
 
 - Edit multiple songs at the same time
 
