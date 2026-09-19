@@ -32,6 +32,8 @@ DEFAULTS = {
     # button and the audio editor's volume slider; it only ever changes
     # the output stream, never a file on disk.
     "preview_volume": 1.0,
+    # Last songpack folder opened successfully; used for VSCode-style session restore.
+    "last_songpack_folder": "",
 }
 
 
