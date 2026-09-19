@@ -50,12 +50,18 @@ and the other one is automatically consistent on next redraw.
 ```
 main.py
   → app.App()            (app.py wraps app_core.App, fixes CTkTabview packing)
+  → app_core.App.__init__()        (loads editor preferences and builds tabs)
+  → best-effort last-songpack restore (from app_settings.py)
   → ui_enhancements.install(app)   (adds preview buttons, save verification,
                                      filename sanitization — monkeypatches
                                      a few App methods)
   → version_ui.install(app)        (adds a version label to the Help menu)
   → app.mainloop()
 ```
+
+On a successful restore, the last opened songpack folder is loaded and the
+window selects **Biome Simulator**. A missing or invalid restore target is
+cleared and startup continues with a fresh songpack.
 
 `app.py` and `app_core.py` together are "the app" — `app_core.py` has the
 real `App`/tab classes; `app.py` is a thin compatibility shim (historical
