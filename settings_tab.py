@@ -22,7 +22,7 @@ import biome_customization
 import constants as C
 
 
-class SettingsTab(ttk.Frame):
+class SettingsTab(ctk.CTkFrame):
     def __init__(self, parent, app: "App"):  # noqa: F821
         super().__init__(parent)
         self.app = app
