@@ -150,7 +150,7 @@ COMMON_DIMENSIONS = [
     "minecraft:overworld", "minecraft:the_nether", "minecraft:the_end",
 ]
 
-DEFAULT_ALLOW_FALLBACK = True  # see priority.py / README for why this
+DEFAULT_ALLOW_FALLBACK = False  # ReactiveMusic's documented default; users opt into fallback per entry
 # default matters for the "don't loop the
 # same rare song" requirement.
 DEFAULT_FORCE_CHANCE = 1.0
