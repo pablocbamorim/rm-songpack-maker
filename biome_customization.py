@@ -21,6 +21,12 @@ distinct:
     for every user who has this file (i.e. once it's committed to the
     project repo), starts out seeing. `default_color()` checks this
     before falling back to the hash-based algorithmic colour.
+
+Biome map attributes (temperature / humidity / erosion / weirdness, each in
+[-1, 1]) live in the SAME two files, under a "biome_attributes" key, so they
+travel with the colours: bundled values in `default_biome_colors.json`,
+per-songpack additions/overrides in `biome_customization.json`. They drive
+the Biome Map chart (see biome_chart.py).
 """
 
 from __future__ import annotations
@@ -34,8 +40,15 @@ import tempfile
 CONFIG_FILENAME = "biome_customization.json"
 APP_DEFAULTS_FILENAME = "default_biome_colors.json"
 
+#: Keys of one biome's chart attributes, each a float in [-1, 1].
+ATTRIBUTE_KEYS = ("temperature", "humidity", "erosion", "weirdness")
+
 # (biomes_dict, tags_dict) or None if not loaded yet
 _app_defaults_cache = None
+# {name: {temperature, humidity, erosion, weirdness}} or None if not loaded
+_app_attributes_cache = None
+# {biome_name: "minecraft:overworld"|...} or None if not loaded yet
+_app_dimensions_cache = None
 
 
 def _bundled_defaults_path() -> str:
@@ -61,7 +74,13 @@ def load_app_defaults(force_reload: bool = False):
     Cached after the first read since this is consulted on every
     default_color() call; pass force_reload=True after writing to it.
     """
-    global _app_defaults_cache
+    global _app_defaults_cache, _app_attributes_cache, _app_dimensions_cache
+    if force_reload:
+        # All three caches read the same file, so a forced reload has to
+        # drop all of them -- otherwise editing e.g. biome_dimensions
+        # would leave stale colours in _app_defaults_cache.
+        _app_attributes_cache = None
+        _app_dimensions_cache = None
     if _app_defaults_cache is not None and not force_reload:
         return _app_defaults_cache
     try:
@@ -76,6 +95,89 @@ def load_app_defaults(force_reload: bool = False):
         _clean_color_map(data.get("biome_tags", {})),
     )
     return _app_defaults_cache
+
+
+def _clean_attribute_map(value) -> dict:
+    """{name: {temperature, humidity, erosion, weirdness}}, dropping
+    malformed entries and clamping every number into [-1, 1].
+    """
+    if not isinstance(value, dict):
+        return {}
+    cleaned = {}
+    for name, attrs in value.items():
+        if not isinstance(attrs, dict):
+            continue
+        try:
+            cleaned[str(name)] = {
+                key: max(-1.0, min(1.0, float(attrs.get(key, 0.0))))
+                for key in ATTRIBUTE_KEYS
+            }
+        except (TypeError, ValueError):
+            continue
+    return cleaned
+
+
+def load_app_attributes(force_reload: bool = False) -> dict:
+    """Bundled biome chart attributes from default_biome_colors.json."""
+    global _app_attributes_cache
+    if _app_attributes_cache is not None and not force_reload:
+        return _app_attributes_cache
+    try:
+        with open(_bundled_defaults_path(), encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError, TypeError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    _app_attributes_cache = _clean_attribute_map(
+        data.get("biome_attributes", {}))
+    return _app_attributes_cache
+
+
+def _clean_dimension_map(value) -> dict:
+    """{biome_name: dimension_id}, dropping anything that isn't a
+    non-empty string. Same tolerant-of-malformed-input stance as the
+    colour and attribute loaders.
+    """
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(k): str(v)
+        for k, v in value.items()
+        if isinstance(v, str) and v
+    }
+
+
+def load_app_dimensions(force_reload: bool = False) -> dict:
+    """Bundled biome -> dimension mapping from default_biome_colors.json.
+
+    Used by the Biome Map's dimension filter (see app_core.py). Custom
+    biomes added through the editor have no entry here, which is why
+    they only show up under the 'All' filter on the map.
+    """
+    global _app_dimensions_cache
+    if _app_dimensions_cache is not None and not force_reload:
+        return _app_dimensions_cache
+    try:
+        with open(_bundled_defaults_path(), encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError, TypeError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    _app_dimensions_cache = _clean_dimension_map(
+        data.get("biome_dimensions", {}))
+    return _app_dimensions_cache
+
+
+def all_attributes(custom: dict | None = None) -> dict:
+    """Every biome the chart can draw: the bundled attributes, with the
+    current songpack's own entries (`custom`) added on top / overriding.
+    """
+    merged = dict(load_app_attributes())
+    if custom:
+        merged.update(custom)
+    return merged
 
 
 def save_app_default_color(name: str, is_tag: bool, color: str) -> str:
@@ -106,13 +208,12 @@ def save_app_default_color(name: str, is_tag: bool, color: str) -> str:
         prefix=".default_biome_colors_", suffix=".tmp", dir=folder)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "biomes": dict(sorted(data.get("biomes", {}).items(), key=lambda x: x[0].lower())),
-                    "biome_tags": dict(sorted(data.get("biome_tags", {}).items(), key=lambda x: x[0].lower())),
-                },
-                f, indent=2, ensure_ascii=False,
-            )
+            out = dict(data)  # keep other keys, e.g. "biome_attributes"
+            out["biomes"] = dict(
+                sorted(data.get("biomes", {}).items(), key=lambda x: x[0].lower()))
+            out["biome_tags"] = dict(
+                sorted(data.get("biome_tags", {}).items(), key=lambda x: x[0].lower()))
+            json.dump(out, f, indent=2, ensure_ascii=False)
             f.write("\n")
         os.replace(tmp, path)
     except Exception:
@@ -197,7 +298,21 @@ def load(folder: str):
     return _clean_color_map(data.get("biomes", {})), _clean_color_map(data.get("biome_tags", {}))
 
 
-def save(folder: str, biomes: dict, tags: dict) -> None:
+def load_attributes(folder: str) -> dict:
+    """Per-songpack biome chart attributes (custom biomes that should show
+    up on the Biome Map). Missing/invalid data just means "none".
+    """
+    try:
+        with open(os.path.join(folder, CONFIG_FILENAME), encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError, TypeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return _clean_attribute_map(data.get("biome_attributes", {}))
+
+
+def save(folder: str, biomes: dict, tags: dict, attributes: dict | None = None) -> None:
     """Write biome_customization.json into the songpack folder, atomically."""
     os.makedirs(folder, exist_ok=True)
     target = os.path.join(folder, CONFIG_FILENAME)
@@ -206,16 +321,15 @@ def save(folder: str, biomes: dict, tags: dict) -> None:
     )
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "version": 1,
-                    "biomes": dict(sorted(biomes.items(), key=lambda x: x[0].lower())),
-                    "biome_tags": dict(sorted(tags.items(), key=lambda x: x[0].lower())),
-                },
-                f,
-                indent=2,
-                ensure_ascii=False,
-            )
+            payload = {
+                "version": 1,
+                "biomes": dict(sorted(biomes.items(), key=lambda x: x[0].lower())),
+                "biome_tags": dict(sorted(tags.items(), key=lambda x: x[0].lower())),
+            }
+            if attributes:
+                payload["biome_attributes"] = dict(
+                    sorted(attributes.items(), key=lambda x: x[0].lower()))
+            json.dump(payload, f, indent=2, ensure_ascii=False)
             f.write("\n")
         os.replace(tmp, target)
     except Exception:

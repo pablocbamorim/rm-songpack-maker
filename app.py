@@ -22,6 +22,7 @@ class App(_BaseApp):
             self.info_tab,
             self.library_tab,
             self.priority_tab,
+            self.simulator_tab,
             self.settings_tab,
         ):
             tab.pack(fill="both", expand=True)

@@ -3,12 +3,15 @@ app_core.py
 -----------
 The Tkinter GUI for the ReactiveMusic Songpack Editor.
 
-Three tabs:
+Tabs:
   1. Songpack Info      -- the global yaml keys (name, author, ...)
   2. Music & Conditions  -- pick a song, check the conditions that should
                             trigger it, see a live preview + rarity score
   3. Priority Order      -- the auto-computed (and freely drag-reorderable)
                             play-priority list
+  4. Biome Simulator     -- pick a situation + a biome on the map and see /
+                            hear which songs the mod would play (simulator_tab.py)
+  5. Settings
 
 See README.md for the reasoning behind the rarity scoring and the
 "variety mixing" fallback helper.
@@ -27,9 +30,11 @@ import yaml_io
 import priority
 import condition_logic
 import biome_customization
+import biome_chart
 import mod_versions
 import app_settings
 import settings_tab
+import simulator_tab
 from models import Songpack, Entry, BiomeCondition, DimensionCondition, BlockCondition
 
 
@@ -601,6 +606,15 @@ class LibraryTab(ctk.CTkFrame):
     # configure them, so we flag it visually in the list).
     WARNING_PREFIX = "\u26a0 "  # ⚠
 
+    # Biome Map dimension-filter labels, mapped to the ids used in
+    # default_biome_colors.json's "biome_dimensions" block.
+    _CHART_DIMENSIONS = ["All", "Overworld", "Nether", "End"]
+    _CHART_DIMENSION_IDS = {
+        "Overworld": "minecraft:overworld",
+        "Nether": "minecraft:the_nether",
+        "End": "minecraft:the_end",
+    }
+
     def __init__(self, parent, app: "App"):
         super().__init__(parent, fg_color="transparent")
         self.app = app
@@ -618,6 +632,15 @@ class LibraryTab(ctk.CTkFrame):
         # skip redundant rebuilds when Tk re-emits <<TreeviewSelect>> for
         # the same selection (e.g. the second click of a double-click).
         self._editor_showing_ids: frozenset = frozenset()
+        # Biome Map view state. Lives on the tab (not per-entry) so
+        # switching songs doesn't reset the user's filter or collapse
+        # state. Also initialised here -- not just in _clear_editor() --
+        # because _build_biome_map_section() reads them the first time an
+        # entry is selected, before _clear_editor() has ever run.
+        self._biome_map_collapsed = False
+        self._biome_map_dimension = "All"
+        self.biome_map = None
+        self.biome_map_container = None
 
         # ---- left: entry list -------------------------------------------------
         left = ctk.CTkFrame(self, corner_radius=10)
@@ -1045,6 +1068,11 @@ class LibraryTab(ctk.CTkFrame):
 
     def _clear_editor(self, message):
         self._editor_showing_ids = frozenset()
+        # Biome Map view state. Kept on the tab (not rebuilt per entry) so
+        # switching songs doesn't reset the user's filter or force the map
+        # back open after they've collapsed it.
+        self._biome_map_collapsed = False
+        self._biome_map_dimension = "All"
         for w in self.editor_frame.winfo_children():
             w.destroy()
         ctk.CTkLabel(
@@ -1223,8 +1251,13 @@ class LibraryTab(ctk.CTkFrame):
         self.category_vars = {}
         self.fixed_combine_vars = {}
 
+        self.biome_map = None
+
         # -- target banner --
         self._target_banner(self.editor_frame)
+
+        # -- biome map chart: deliberately first, above every other group --
+        self._build_biome_map_section(entry)
 
         # -- fixed checkbox categories --
         self._build_fixed_categories(entry)
@@ -1336,6 +1369,181 @@ class LibraryTab(ctk.CTkFrame):
 
         window.bind("<Escape>", lambda _e: window.destroy())
         window.bind("<Return>", lambda _e: save())
+
+    # -- biome map (temperature x humidity chart) ------------------------------
+    def _build_biome_map_section(self, entry: Entry):
+        """Chart of every biome at its temperature/humidity coordinate.
+        Clicking an icon adds/removes a plain ``BIOME=`` condition on the
+        entry -- the same list the Biome section below edits -- and the
+        OR/AND selector here drives the same ``biome_combine`` setting.
+
+        Two view controls sit in the header row:
+
+          * a Dimension selector that restricts the chart to biomes that
+            spawn in the chosen dimension (sourced from the
+            ``biome_dimensions`` block in default_biome_colors.json), and
+          * a Hide/Show toggle that collapses the chart + its hint text
+            so the editor below can reclaim the vertical space.
+        """
+        body = _section(self.editor_frame,
+                        "Biome Map (temperature × humidity)")
+
+        # -- header row: OR/AND + dimension + collapse toggle ----------
+        row = _row(body)
+        ctk.CTkLabel(row, text="Combine enabled biomes with:",
+                     font=_BODY).pack(side="left")
+        self.chart_combine_var = tk.StringVar(value=entry.biome_combine)
+        ctk.CTkSegmentedButton(
+            row, values=[C.COMBINE_OR, C.COMBINE_AND],
+            variable=self.chart_combine_var, font=_BODY,
+            command=lambda v: self._set_combine(entry, "biome_combine", v),
+        ).pack(side="left", padx=8)
+
+        ctk.CTkLabel(row, text="Dimension:", font=_BODY).pack(
+            side="left", padx=(16, 0))
+        self.chart_dimension_var = tk.StringVar(
+            value=self._biome_map_dimension)
+        ctk.CTkSegmentedButton(
+            row, values=self._CHART_DIMENSIONS,
+            variable=self.chart_dimension_var, font=_BODY,
+            command=self._on_chart_dimension_changed,
+        ).pack(side="left", padx=8)
+
+        # Right-aligned so the (potentially many) filter widgets on the
+        # left can never push it off screen.
+        self.biome_map_toggle_btn = ctk.CTkButton(
+            row,
+            text=("▸ Show map" if self._biome_map_collapsed else "▾ Hide map"),
+            width=110, font=_BODY,
+            command=self._toggle_biome_map,
+        )
+        self.biome_map_toggle_btn.pack(side="right", padx=(6, 2))
+
+        # -- chart + hint, wrapped in a single forgettable container ----
+        # A container (rather than packing/forgetting the chart and hint
+        # separately) keeps the collapse/expand to a single pack_forget()
+        # and guarantees the two can never get out of sync.
+        self.biome_map_container = ctk.CTkFrame(body, fg_color="transparent")
+        if not self._biome_map_collapsed:
+            self.biome_map_container.pack(fill="x", padx=4, pady=(4, 2))
+
+        self.biome_map = biome_chart.BiomeChart(
+            self.biome_map_container,
+            # Bound method, not a lambda: _chart_biomes reads the current
+            # dimension filter on every call, so the chart re-filters
+            # itself on each redraw() without ever being rebuilt.
+            biomes=self._chart_biomes,
+            color_of=lambda name: self._biome_color(name, False),
+            active=lambda: self._active_biome_keys(entry),
+            on_toggle=lambda name: self._on_chart_toggle(entry, name),
+            dark=bool(self.app.settings.get("dark_theme", True)),
+            height=460,
+        )
+        self.biome_map.pack(fill="x", padx=4, pady=(4, 2))
+
+        ctk.CTkLabel(
+            self.biome_map_container,
+            text=("Click a biome to enable/disable it as a BIOME= condition (enabled = ✔). "
+                  "Lobe depth follows erosion and lobe count follows weirdness. Biomes that "
+                  "share exactly the same coordinates are fanned out slightly so each stays "
+                  "clickable. The Dimension filter above limits the map to biomes that spawn "
+                  "in the chosen dimension; custom biomes (which have no dimension recorded) "
+                  "show only under 'All'."),
+            font=_SMALL, text_color=("gray40", "gray70"), justify="left",
+            anchor="w", wraplength=620,
+        ).pack(anchor="w", padx=6, pady=(0, 4))
+
+    # -- biome map: data source + view state ---------------------------
+    def _chart_biomes(self) -> dict:
+        """Data source handed to BiomeChart. Called fresh on every
+        redraw, so switching the dimension selector and calling redraw()
+        is enough to re-filter the map -- no widget rebuild required.
+        """
+        all_attrs = biome_customization.all_attributes(
+            self.app.biome_custom_attributes)
+        label = self.chart_dimension_var.get()
+        if label == "All":
+            return all_attrs
+        wanted = self._CHART_DIMENSION_IDS.get(label)
+        if not wanted:
+            return all_attrs
+        dimension_of = biome_customization.load_app_dimensions()
+        return {
+            name: attrs
+            for name, attrs in all_attrs.items()
+            if dimension_of.get(name) == wanted
+        }
+
+    def _on_chart_dimension_changed(self, value: str):
+        """The chart's Dimension selector moved: remember the choice and
+        ask the chart to re-read its data (which the new filter now
+        restricts). Redraw is deferred by one idle cycle so the segmented
+        button paints its new state before we rebuild the canvas.
+        """
+        self._biome_map_dimension = value
+        chart = getattr(self, "biome_map", None)
+        if chart is not None and chart.winfo_exists():
+            self.after_idle(chart.redraw)
+
+    def _toggle_biome_map(self):
+        """Collapse/expand the biome map (chart + hint text)."""
+        self._biome_map_collapsed = not self._biome_map_collapsed
+        container = getattr(self, "biome_map_container", None)
+        if container is None or not container.winfo_exists():
+            return
+        if self._biome_map_collapsed:
+            container.pack_forget()
+            self.biome_map_toggle_btn.configure(text="▸ Show map")
+        else:
+            container.pack(fill="x", padx=4, pady=(4, 2))
+            self.biome_map_toggle_btn.configure(text="▾ Hide map")
+            # Un-hiding takes the canvas from ~0×0 to its real size, but
+            # Tk doesn't always deliver <Configure> in the same event
+            # cycle as the re-pack. Kick off an explicit redraw on the
+            # next idle so the plot is populated the moment it becomes
+            # visible, rather than on the first mouse move.
+            chart = getattr(self, "biome_map", None)
+            if chart is not None and chart.winfo_exists():
+                self.after_idle(chart.redraw)
+
+    @staticmethod
+    def _active_biome_keys(entry: Entry) -> set:
+        return {biome_chart.normalize_name(b.value)
+                for b in entry.biomes if not b.is_tag}
+
+    def _on_chart_toggle(self, entry: Entry, name: str):
+        key = biome_chart.normalize_name(name)
+        matches = [b for b in entry.biomes
+                   if not b.is_tag and biome_chart.normalize_name(b.value) == key]
+        if matches:
+            entry.biomes = [b for b in entry.biomes if b not in matches]
+        else:
+            entry.biomes.append(BiomeCondition(value=name, is_tag=False))
+        # Update the Biome section below in place (rebuilding the whole
+        # editor here would make the chart flash on every click).
+        self._sync_biome_widgets(entry)
+        self._refresh_after_change(entry, rebuild=False)
+
+    def _sync_biome_widgets(self, entry: Entry):
+        """Refresh the Biome section's listbox and picker after the entry's
+        biome list was changed from somewhere other than that section.
+        """
+        try:
+            listbox = getattr(self, "biome_listbox", None)
+            if listbox is not None and listbox.winfo_exists():
+                listbox.delete(0, "end")
+                for index, b in enumerate(entry.biomes):
+                    listbox.insert(
+                        "end", ("[TAG] " if b.is_tag else "") + b.value)
+                    listbox.itemconfig(
+                        index, foreground=self._biome_color(b.value, b.is_tag))
+                listbox.configure(height=min(4, max(2, len(entry.biomes))))
+            combo = getattr(self, "biome_combobox", None)
+            if combo is not None:
+                combo.configure(values=self._available_biome_values(
+                    entry, self.biome_is_tag_var.get()))
+        except tk.TclError:
+            pass
 
     # -- biome ---------------------------------------------------------------
     def _build_biome_section(self, entry: Entry):
@@ -1686,6 +1894,13 @@ class LibraryTab(ctk.CTkFrame):
 
     def _set_combine(self, entry: Entry, attr: str, value: str):
         setattr(entry, attr, value)
+        if attr == "biome_combine":
+            # The Biome Map and the Biome section each have an OR/AND
+            # selector for the same setting; keep them showing the same value.
+            for name in ("chart_combine_var", "biome_combine_var"):
+                var = getattr(self, name, None)
+                if var is not None and var.get() != value:
+                    var.set(value)
         self._refresh_after_change(entry, rebuild=False)
 
     def _filter_block_options(self):
@@ -2010,6 +2225,9 @@ class App(ctk.CTk):
         self.current_save_folder = None
         self.biome_custom_biomes = {}
         self.biome_custom_tags = {}
+        # Songpack-specific biome chart attributes (custom biomes only; the
+        # bundled ones come from default_biome_colors.json).
+        self.biome_custom_attributes = {}
 
         # Editor-wide preferences are loaded before the tabs are built so
         # SettingsTab reads the persisted values on construction.
@@ -2027,6 +2245,8 @@ class App(ctk.CTk):
             self.notebook.add("Music & Conditions"), self)
         self.priority_tab = PriorityTab(
             self.notebook.add("Priority Order"), self)
+        self.simulator_tab = simulator_tab.SimulatorTab(
+            self.notebook.add("Biome Simulator"), self)
         self.settings_tab = settings_tab.SettingsTab(
             self.notebook.add("Settings"), self)
 
@@ -2077,12 +2297,17 @@ class App(ctk.CTk):
         self.info_tab.push_from_pack()
         self.library_tab.refresh_tree()
         self.priority_tab.refresh()
+        self.simulator_tab.refresh()
         self.settings_tab.refresh()
 
     def _on_tab_changed(self, _event=None):
         self.info_tab.pull_into_pack()
         self.priority_tab.refresh()
         self.library_tab.refresh_tree(keep_selection=True)
+        # The simulator caches its plans; entries may have been edited on
+        # another tab, so rebuild them whenever the simulator comes into view.
+        if self.notebook.get() == "Biome Simulator":
+            self.simulator_tab.refresh()
 
     def on_entry_conditions_changed(self, _entry: Entry):
         self.library_tab.refresh_tree(keep_selection=True)
@@ -2137,6 +2362,9 @@ class App(ctk.CTk):
         ctk.set_appearance_mode("dark" if dark else "light")
         app_settings.apply_ttk_theme(self, dark)
         _configure_ttk_typography(self, dark)
+        simulator = getattr(self, "simulator_tab", None)
+        if simulator is not None:
+            simulator.apply_theme()
 
     def save_settings(self):
         try:
@@ -2154,6 +2382,7 @@ class App(ctk.CTk):
         entries = [e for e in self.pack_data.entries if e.id in ids]
         if len(entries) == 1 and lib.editor_outer.winfo_ismapped():
             lib._build_editor_for(entries[0])
+        self.simulator_tab.on_biome_colors_changed()
 
     # -- menu -------------------------------------------------
     def _build_menu(self):
@@ -2195,6 +2424,8 @@ class App(ctk.CTk):
         self.current_save_folder = None
         self.biome_custom_biomes = {}
         self.biome_custom_tags = {}
+        self.biome_custom_attributes = {}
+        self.simulator_tab.reset()
         self.refresh_all()
         self.set_status(
             "Started a new, empty songpack. Set its Minecraft version in Songpack Info "
@@ -2208,13 +2439,16 @@ class App(ctk.CTk):
         try:
             self.pack_data = yaml_io.load_songpack(path)
             biomes, tags = biome_customization.load(path)
+            attributes = biome_customization.load_attributes(path)
             mod_versions.apply_to_pack(self.pack_data, mod_versions.load(path))
         except Exception as exc:  # noqa: BLE001 - surface any load error to the user
             messagebox.showerror("Load failed", str(exc))
             return
         self.biome_custom_biomes = biomes
         self.biome_custom_tags = tags
+        self.biome_custom_attributes = attributes
         self.current_save_folder = path
+        self.simulator_tab.reset()
         self.refresh_all()
         version = self.effective_mod_version()
         target = f", targeting Reactive Music {version}" if version else ""
@@ -2265,7 +2499,8 @@ class App(ctk.CTk):
             path = yaml_io.save_songpack(
                 self.pack_data, folder, copy_music_from=None)
             biome_customization.save(
-                folder, self.biome_custom_biomes, self.biome_custom_tags)
+                folder, self.biome_custom_biomes, self.biome_custom_tags,
+                self.biome_custom_attributes)
             mod_versions.save(folder, self.pack_data)
         except Exception as exc:
             messagebox.showerror("Save failed", str(exc))

@@ -44,6 +44,7 @@ This is especially useful when a songpack grows beyond a few entries. Instead of
   <img src="assets/audioeditorshowcase.png" alt="Soundpack Maker">
 </p>
 
+- **Biome Simulator** tab: choose a situation (time of day, weather, world height, underwater, plus any other condition), hover or click a biome on the map and see which songs ReactiveMusic would play there, in priority order. Double-click a song to start a playlist that imitates the mod.
 - Choose a target Minecraft / ReactiveMusic build so unsupported conditions are identified before saving.
 - Keep unsupported or custom conditions instead of losing them when editing a songpack.
 
@@ -55,7 +56,6 @@ This is especially useful when a songpack grows beyond a few entries. Instead of
 
 - UI improvements and general workflow polish.
 - A biome condition editor based on a temperature/humidity chart, making it possible to select biomes visually and combine them with the same condition logic used elsewhere.
-- A dedicated songpack preview tab showing which songs can play for each biome, in priority order, with song previews and a simulation mode for testing playback at a chosen time of day.
 - More planned improvements to make building and testing songpacks faster and easier.
 
 ## Windows installation
@@ -196,6 +196,15 @@ Your Songpack/
 ```
 
 `biome_customization.json` is editor metadata for custom biome/biome-tag display colors; ReactiveMusic does not use it for its event logic.
+
+## Simulating what plays in a biome
+
+Open **Biome Simulator** to test a songpack without launching Minecraft.
+
+- The sliders at the top pick exactly one option each for **time of day**, **weather** and **world height**, and a switch toggles **underwater**. **More conditions** (hidden by default) holds the remaining events (`HOME`, `BOSS`, `VILLAGE`, ...) and a manual box for facts the simulator cannot infer, such as `DIM=NETHER`, `BLOCK=nether_bricks,1000` or `BIOMETAG=IS_WET`.
+- Hover a biome on the map to see its songs in priority order; click it to pin the list. Double-click a song to start a playlist (needs the music folder loaded); the playing song gets a sound-wave marker.
+- The rules follow `MAKING_SONGPACKS.md`: the first valid entry wins, `allowFallback` decides whether the next valid entry is used once an entry's songs are exhausted (otherwise it loops and entries below it are shown dimmed as unreachable), and `forceStop*` flags cut the current song when the situation changes.
+- Simplifications: songs play in list order (the mod may pick randomly), `musicDelayLength` silences are ignored, and the biome -> `BIOMETAG` table is built in and approximate. Entries that depend on facts the simulator cannot know are reported instead of silently hidden.
 
 ## Installing the finished songpack in Minecraft
 
