@@ -2555,11 +2555,55 @@ class App(ctk.CTk):
         self.refresh_all()
         self.apply_theme()
 
+        # Restore the last successfully opened songpack after the UI exists.
+        # Like VSCode, a failed restore falls back to a fresh editor session.
+        self.after_idle(self._restore_last_songpack)
+
         # Maximize only after the complete UI has been constructed. The
         # window is transparent during this operation, so the user never
         # sees the intermediate 1120x760 frame or a maximize flash.
         self.after(10, self._maximize_window)
         self.after_idle(lambda: self.attributes("-alpha", 1.0))
+
+    def _restore_last_songpack(self):
+        """Restore the last songpack session when its folder still exists.
+
+        Startup restoration is deliberately best-effort: a deleted/moved
+        songpack must not prevent the editor from opening. A successful
+        restore lands on the Biome Simulator so the restored pack is
+        immediately usable as a preview rather than reopening on metadata.
+        """
+        path = str(self.settings.get("last_songpack_folder", "") or "").strip()
+        if not path:
+            return
+        if not os.path.isdir(path):
+            self.settings["last_songpack_folder"] = ""
+            self.save_settings()
+            return
+        try:
+            self.pack_data = yaml_io.load_songpack(path)
+            biomes, tags = biome_customization.load(path)
+            attributes = biome_customization.load_attributes(path)
+            mod_versions.apply_to_pack(self.pack_data, mod_versions.load(path))
+        except Exception:
+            # The session may refer to a folder that still exists but no
+            # longer contains a valid songpack. Treat that exactly like a
+            # missing restore target rather than interrupting startup.
+            self.settings["last_songpack_folder"] = ""
+            self.save_settings()
+            return
+
+        self.biome_custom_biomes = biomes
+        self.biome_custom_tags = tags
+        self.biome_custom_attributes = attributes
+        self.current_save_folder = path
+        music_folder = os.path.join(path, "music")
+        self.music_source_folder = music_folder if os.path.isdir(music_folder) else None
+        self.simulator_tab.reset()
+        self.refresh_all()
+        self.notebook.set("Biome Simulator")
+        self.set_status(
+            f"Restored {len(self.pack_data.entries)} entries from {path}")
 
     def _maximize_window(self):
         """Maximize to the current screen — same effect as clicking the
@@ -2767,6 +2811,8 @@ class App(ctk.CTk):
         self.biome_custom_tags = tags
         self.biome_custom_attributes = attributes
         self.current_save_folder = path
+        self.settings["last_songpack_folder"] = path
+        self.save_settings()
         self.simulator_tab.reset()
         self.refresh_all()
         version = self.effective_mod_version()
@@ -2825,6 +2871,8 @@ class App(ctk.CTk):
             messagebox.showerror("Save failed", str(exc))
             return
         self.current_save_folder = folder
+        self.settings["last_songpack_folder"] = folder
+        self.save_settings()
         self.set_status(f"Saved to {path}")
         messagebox.showinfo(
             "Saved",
@@ -2862,9 +2910,9 @@ class App(ctk.CTk):
             "conditions score higher (rarer), fewer/broader ones score lower. 'Auto-arrange "
             "by rarity' sorts entries highest-score-first, because the mod plays the first "
             "entry (top to bottom) whose conditions are currently all true.\n\n"
-            "To stop a rare song from looping, every new entry defaults to allowFallback=ON: "
-            "once an entry's own song(s) have all played, the mod falls through to the next "
-            "valid (broader) entry instead of repeating.\n\n"
+            "allowFallback defaults to OFF, matching ReactiveMusic's documented YAML default. "
+            "Turn it on for entries where you want the mod to fall through to another valid "
+            "event after this entry's own song(s) have all played.\n\n"
             "For a more direct fix, open a narrow entry's editor -- if a broader entry would "
             "also be valid in the same situation, it's suggested under 'Priority & Variety' "
             "with a 'Mix into this entry' button, which copies that broader song straight into "
