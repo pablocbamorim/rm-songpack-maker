@@ -35,6 +35,7 @@ import mod_versions
 import app_settings
 import settings_tab
 import simulator_tab
+import case_grouping
 from models import Songpack, Entry, BiomeCondition, DimensionCondition, BlockCondition
 
 
@@ -260,31 +261,9 @@ def _row(parent) -> ctk.CTkFrame:
     return row
 
 
-def _entry_fixed_combine(entry) -> dict:
-    """Return a mutable ``{category: OR|AND}`` map for the entry's fixed
-    checkbox groups.
-
-    The canonical home for this is ``Entry.fixed_combine`` (see models.py),
-    but reading through this helper means the editor renders correctly even
-    when an older models.py that predates the field is still in use: the
-    field is created on the fly with the safe OR default. The actual
-    persistence/serialisation of the choice still requires the
-    models.py + condition_logic.py updates from the same patch series --
-    this helper only prevents the editor from coming up empty.
-    """
-    fc = getattr(entry, "fixed_combine", None)
-    if not isinstance(fc, dict):
-        fc = {k: C.COMBINE_OR for k in C.FIXED_CATEGORY_ORDER}
-        try:
-            entry.fixed_combine = fc
-        except Exception:
-            pass
-    else:
-        # Fill in any category that isn't represented yet so the UI can
-        # rely on .get() returning a real value.
-        for k in C.FIXED_CATEGORY_ORDER:
-            fc.setdefault(k, C.COMBINE_OR)
-    return fc
+# Shared with biome_case_editor.py, which needs the exact same
+# "get-or-create the OR/AND map" behaviour for the fixed categories.
+_entry_fixed_combine = case_grouping.entry_fixed_combine
 
 
 def _flow_group(container, widgets, gap_x: int = 14, gap_y: int = 3):
@@ -598,6 +577,52 @@ class InfoTab(ctk.CTkFrame):
 
 
 # ---------------------------------------------------------------------------
+# Cases: several sets of trigger conditions for the same song
+# ---------------------------------------------------------------------------
+# A "case" is one set of conditions under which a song plays. In
+# ReactiveMusic.yaml a case is simply its own entry (its own ``events`` list
+# and flags) that lists the same song, so the editor models "a song with N
+# cases" as N ``Entry`` objects that happen to share a primary song. Because
+# every case is still an ordinary entry, priority ordering, the simulator,
+# mod-version checks and YAML saving all keep working unchanged, and each
+# case takes its own place in the priority order (a rare case can sit high
+# while a broad case of the same song sits low). A case's "number" (Case 1,
+# Case 2, ...) is just its position among same-song entries in priority
+# order -- see case_grouping.py.
+#
+# Song-centric ("cases of a song", used below) and biome-centric ("cases of
+# a biome", see biome_case_editor.py -- right-click a biome on the Biome
+# Simulator map) grouping both live in case_grouping.py, computed purely
+# from each entry's own data (primary song text / biome conditions) rather
+# than a separate id kept on the side. That is what makes the two tabs
+# automatically agree with each other: there is only one underlying list,
+# app.pack.entries, and both are just different groupings of it -- editing
+# from either one is immediately visible in the other, nothing to resync by
+# hand, and nothing extra to round-trip through a save/load.
+# ---------------------------------------------------------------------------
+_gid = case_grouping.gid
+_group_by_song = case_grouping.group_by_song
+_group_of = case_grouping.group_of
+_add_case_to = case_grouping.add_case_to
+_case_labels = case_grouping.case_labels
+
+
+def _summarize_group(entries, max_len: int = 120) -> str:
+    """Condition preview for a song row: one summary per case, numbered."""
+    if len(entries) == 1:
+        return condition_logic.summarize_entry(entries[0])
+    parts = []
+    for number, entry in enumerate(entries, start=1):
+        events = condition_logic.build_events(entry)
+        parts.append(f"{number}: " + (" & ".join(events)
+                     if events else "(always)"))
+    text = "  \u2502  ".join(parts)
+    if len(text) > max_len:
+        text = text[: max_len - 1] + "\u2026"
+    return text
+
+
+# ---------------------------------------------------------------------------
 # Tab 2: Music & Conditions
 # ---------------------------------------------------------------------------
 class LibraryTab(ctk.CTkFrame):
@@ -628,10 +653,17 @@ class LibraryTab(ctk.CTkFrame):
         # _on_select() doesn't rebuild the condition editor in response to
         # a purely internal refresh. See _on_select for the full story.
         self._suppress_select_rebuild = False
-        # Ids of the entries the editor is currently displaying. Used to
-        # skip redundant rebuilds when Tk re-emits <<TreeviewSelect>> for
-        # the same selection (e.g. the second click of a double-click).
-        self._editor_showing_ids: frozenset = frozenset()
+        # What the editor is currently displaying: (selected tree rows,
+        # active case). Used to skip redundant rebuilds when Tk re-emits
+        # <<TreeviewSelect>> for the same selection (e.g. the second click
+        # of a double-click).
+        self._editor_showing_key = None
+        # Cases: index (0 = "Case 1") of the case tab being edited, and the
+        # tab buttons currently in the case bar. See "cases" section below.
+        self.active_case = 0
+        self._case_tab_buttons: list = []
+        self._case_bar_visible = False
+        self._multi_group_count = 0
         # Biome Map view state. Lives on the tab (not per-entry) so
         # switching songs doesn't reset the user's filter or collapse
         # state. Also initialised here -- not just in _clear_editor() --
@@ -732,6 +764,11 @@ class LibraryTab(ctk.CTkFrame):
         )
         self.edit_audio_btn.pack(side="right", padx=(0, 6))
 
+        # Case tabs ("Case 1", "Case 2", ... + "Add case"). Built and shown
+        # by _refresh_case_bar() once a song is selected; packed between the
+        # header and the editor so it stays put while the editor scrolls.
+        self.case_bar = ctk.CTkFrame(self.right, fg_color="transparent")
+
         # editor_outer stays as a plain container so _toggle_editor() and
         # App.on_target_changed()/on_biome_colors_changed() can keep using
         # pack_forget()/winfo_ismapped() exactly as before.
@@ -766,16 +803,24 @@ class LibraryTab(ctk.CTkFrame):
         prev = list(self.selected_entry_ids) if keep_selection else []
         self.tree.delete(*self.tree.get_children())
         query = self.search_var.get().strip().lower()
-        for entry in self.app.pack.entries:
-            if query and not any(query in s.lower() for s in entry.songs):
+        # One row per SONG. A song with several cases is a single row whose
+        # iid is its first case's entry id (so every consumer that looks the
+        # selected row up in pack.entries -- preview, audio editor -- lands
+        # on that song's primary entry).
+        for group in _group_by_song(self.app.pack.entries):
+            if query and not any(query in s.lower()
+                                 for e in group for s in e.songs):
                 continue
-            name = entry.display_name()
-            if not entry.has_any_condition():
+            primary = group[0]
+            name = primary.display_name()
+            if len(group) > 1:
+                name += f"  \u00b7  {len(group)} cases"
+            if any(not e.has_any_condition() for e in group):
                 name = self.WARNING_PREFIX + name
             self.tree.insert(
-                "", "end", iid=entry.id,
-                values=(name, condition_logic.summarize_entry(
-                    entry), priority.score_entry(entry)),
+                "", "end", iid=primary.id,
+                values=(name, _summarize_group(group),
+                        max(priority.score_entry(e) for e in group)),
             )
         valid_prev = [iid for iid in prev if self.tree.exists(iid)]
         if valid_prev:
@@ -790,6 +835,16 @@ class LibraryTab(ctk.CTkFrame):
                 self.tree.selection_set(valid_prev)
             finally:
                 self._suppress_select_rebuild = False
+        elif not keep_selection and self.selected_entry_ids:
+            # A different songpack was loaded/created: the songs the editor
+            # was showing no longer exist, so don't leave their widgets (and
+            # case tabs) on screen.
+            alive = {e.id for e in self.app.pack.entries}
+            if not any(i in alive for i in self.selected_entry_ids):
+                self.selected_entry_ids = []
+                self.selected_entry_id = None
+                self._clear_editor(
+                    "Select a song from the list on the left to configure what makes it play.")
 
     def _add_blank_entry(self):
         name = simpledialog.askstring(
@@ -811,19 +866,23 @@ class LibraryTab(ctk.CTkFrame):
         sel = self.tree.selection()
         if not sel:
             return
-        ids_to_remove = set(sel)
-        entries_to_remove = [
-            e for e in self.app.pack.entries if e.id in ids_to_remove]
-        if not entries_to_remove:
+        # A row is a whole song, so removing it removes all of its cases.
+        selected_rows = set(sel)
+        groups = [g for g in _group_by_song(self.app.pack.entries)
+                  if g[0].id in selected_rows]
+        ids_to_remove = {e.id for g in groups for e in g}
+        if not groups:
             return
 
-        if len(entries_to_remove) == 1:
-            msg = f"Remove '{entries_to_remove[0].display_name()}' from the songpack?"
+        if len(groups) == 1:
+            msg = f"Remove '{groups[0][0].display_name()}' from the songpack?"
+            if len(groups[0]) > 1:
+                msg += f"\n\nThis also removes its {len(groups[0])} cases."
         else:
-            names = ", ".join(e.display_name() for e in entries_to_remove[:5])
-            if len(entries_to_remove) > 5:
-                names += f", +{len(entries_to_remove) - 5} more"
-            msg = f"Remove {len(entries_to_remove)} entries from the songpack?\n\n{names}"
+            names = ", ".join(g[0].display_name() for g in groups[:5])
+            if len(groups) > 5:
+                names += f", +{len(groups) - 5} more"
+            msg = f"Remove {len(groups)} songs from the songpack?\n\n{names}"
 
         if not messagebox.askyesno("Remove entry", msg):
             return
@@ -848,13 +907,15 @@ class LibraryTab(ctk.CTkFrame):
         self._update_edit_songs_btn()
         if not sel:
             return
+        # A genuinely different selection starts on "Case 1" again.
+        if frozenset(sel) != frozenset(self.selected_entry_ids):
+            self.active_case = 0
         self.selected_entry_ids = list(sel)
-        sel_set = set(sel)
-        entries = [e for e in self.app.pack.entries if e.id in sel_set]
+        groups = self._selected_groups()
 
-        if len(entries) == 1:
-            self.selected_entry_id = entries[0].id
-        elif len(entries) > 1:
+        if len(groups) == 1:
+            self.selected_entry_id = groups[0][0].id
+        elif len(groups) > 1:
             self.selected_entry_id = None
 
         # refresh_tree() re-sets the selection after rebuilding the list,
@@ -870,20 +931,10 @@ class LibraryTab(ctk.CTkFrame):
         # showing, don't destroy and rebuild every widget. This is what
         # makes the second click of a double-click stop re-rendering the
         # editor while the <Double-1> preview handler runs.
-        new_ids = frozenset(e.id for e in entries)
-        if new_ids and new_ids == self._editor_showing_ids:
+        if groups and (frozenset(sel), self.active_case) == self._editor_showing_key:
             return
 
-        if len(entries) == 1:
-            self.editor_title.configure(
-                text=f"Conditions for: {entries[0].display_name()}")
-            if self.editor_outer.winfo_ismapped():
-                self._build_editor_for(entries[0])
-        elif len(entries) > 1:
-            self.editor_title.configure(
-                text=f"Editing {len(entries)} songs at once")
-            if self.editor_outer.winfo_ismapped():
-                self._build_multi_editor_for(entries)
+        self.rebuild_editor()
 
     def _update_edit_songs_btn(self):
         """The 'Edit songs…' and 'Edit audio…' actions only make sense for
@@ -971,13 +1022,23 @@ class LibraryTab(ctk.CTkFrame):
         return btn
 
     def _build_multi_editor_for(self, entries):
-        self._editor_showing_ids = frozenset(e.id for e in entries)
+        """``entries`` are the case entries being edited together: Case N of
+        every selected song that has a Case N (see rebuild_editor).
+        """
+        self._editor_showing_key = (
+            frozenset(self.selected_entry_ids), self.active_case)
         for w in self.editor_frame.winfo_children():
             w.destroy()
 
+        skipped = self._multi_group_count - len(entries)
+        scope = (f"Editing Case {self.active_case + 1} of {len(entries)} "
+                 f"song{'s' if len(entries) != 1 else ''} at once.")
+        if skipped > 0:
+            scope += (f" ({skipped} selected song{'s' if skipped != 1 else ''} "
+                      "without this case left alone.)")
         ctk.CTkLabel(
             self.editor_frame,
-            text=(f"Editing {len(entries)} songs at once.  "
+            text=(scope + "  "
                   "Clicking an off/mixed option turns it on for all selected; "
                   "clicking an all-on option turns it off for all selected."),
             font=_SMALL,
@@ -1067,7 +1128,9 @@ class LibraryTab(ctk.CTkFrame):
         ).pack(anchor="w", padx=10, pady=(6, 8))
 
     def _clear_editor(self, message):
-        self._editor_showing_ids = frozenset()
+        self._editor_showing_key = None
+        self.active_case = 0
+        self._hide_case_bar()
         # Biome Map view state. Kept on the tab (not rebuilt per entry) so
         # switching songs doesn't reset the user's filter or force the map
         # back open after they've collapsed it.
@@ -1107,12 +1170,217 @@ class LibraryTab(ctk.CTkFrame):
                             padx=(4, 8), pady=8)
             self.toggle_btn.configure(text="▾ Hide editor")
 
-            ids = self.selected_entry_ids
-            entries = [e for e in self.app.pack.entries if e.id in set(ids)]
-            if len(entries) == 1:
-                self._build_editor_for(entries[0])
-            elif len(entries) > 1:
-                self._build_multi_editor_for(entries)
+            self.rebuild_editor(force=True)
+
+    # -- cases: several condition sets for one song --------------------------
+    # The tab bar above the editor has one tab per case. Each tab edits one
+    # Entry (see the case helpers above LibraryTab), so switching tabs simply
+    # rebuilds the ordinary single-entry editor for that entry.
+    _TAB_ON = (("#3B8ED0", "#1F6AA5"), ("#36719F", "#144870"), "#FFFFFF")
+    _TAB_OFF = (("#D5D9DE", "#3A3A3A"), ("#C4C8CE", "#4A4A4A"),
+                ("#1A1A1A", "#DCE4EE"))
+
+    def _selected_groups(self) -> list:
+        """One list of case entries (Case 1, Case 2, ...) per selected song."""
+        pack = self.app.pack
+        by_id = {e.id: e for e in pack.entries}
+        order: list = []
+        seen: set = set()
+        for iid in self.selected_entry_ids:
+            entry = by_id.get(iid)
+            if entry is not None and _gid(entry) not in seen:
+                seen.add(_gid(entry))
+                order.append(_gid(entry))
+        if not order:
+            return []
+        members: dict = {gid: [] for gid in order}
+        for entry in pack.entries:
+            # Iterating pack.entries in order already yields each song's
+            # cases in priority order -- no separate case-order key needed.
+            if _gid(entry) in members:
+                members[_gid(entry)].append(entry)
+        return [members[gid] for gid in order]
+
+    def rebuild_editor(self, force: bool = False, refresh_bar: bool = True):
+        """(Re)build the case tabs and the editor for the current selection
+        and active case. Skips the (expensive) editor rebuild while the
+        editor is collapsed unless ``force``.
+        """
+        groups = self._selected_groups()
+        if not groups:
+            return
+        entries = None
+        if len(groups) == 1:
+            group = groups[0]
+            self.active_case = max(0, min(self.active_case, len(group) - 1))
+            self.editor_title.configure(
+                text=f"Conditions for: {group[0].display_name()}")
+        else:
+            widest = max(len(g) for g in groups)
+            self.active_case = max(0, min(self.active_case, widest - 1))
+            entries = [g[self.active_case]
+                       for g in groups if len(g) > self.active_case]
+            self._multi_group_count = len(groups)
+            self.editor_title.configure(
+                text=f"Editing {len(groups)} songs at once")
+
+        if refresh_bar:
+            self._refresh_case_bar(groups)
+        else:
+            self._restyle_case_tabs()
+
+        if not (force or self.editor_outer.winfo_ismapped()):
+            return
+        if entries is None:
+            self._build_editor_for(groups[0][self.active_case])
+        else:
+            self._build_multi_editor_for(entries)
+
+    def _show_case_bar(self):
+        if not self._case_bar_visible:
+            self.case_bar.pack(fill="x", padx=10, pady=(0, 4),
+                               before=self.editor_outer)
+            self._case_bar_visible = True
+
+    def _hide_case_bar(self):
+        for w in self.case_bar.winfo_children():
+            w.destroy()
+        self._case_tab_buttons = []
+        if self._case_bar_visible:
+            self.case_bar.pack_forget()
+            self._case_bar_visible = False
+
+    def _refresh_case_bar(self, groups: list):
+        """Rebuild the tab bar. One song selected: its cases + "Add case" and
+        "Remove case". Several songs selected: Case 1..N tabs (N = the most
+        cases any selected song has); hidden when nobody has more than one.
+        """
+        for w in self.case_bar.winfo_children():
+            w.destroy()
+        self._case_tab_buttons = []
+        single = len(groups) == 1
+        count = len(groups[0]) if single else max(len(g) for g in groups)
+        if not single and count <= 1:
+            self._hide_case_bar()
+            return
+        self._show_case_bar()
+
+        top = ctk.CTkFrame(self.case_bar, fg_color="transparent")
+        top.pack(fill="x")
+        tabs = ctk.CTkFrame(top, fg_color="transparent")
+        tabs.pack(side="left", fill="x", expand=True)
+
+        if single:
+            ctk.CTkButton(
+                top, text="Remove case", width=110, font=_BODY,
+                fg_color=("#C24C4C", "#A03030"),
+                hover_color=("#A03030", "#7A2020"),
+                state="normal" if count > 1 else "disabled",
+                command=self._remove_case,
+            ).pack(side="right", padx=(6, 0), anchor="n")
+
+        # Tabs and the "+" button share one wrapping flow, so many cases
+        # wrap onto extra rows instead of running off the panel.
+        widgets = []
+        for index in range(count):
+            button = ctk.CTkButton(
+                tabs, text=f"Case {index + 1}", width=96, height=30,
+                corner_radius=6, font=_BODY,
+                command=lambda n=index: self._select_case(n))
+            widgets.append(button)
+            self._case_tab_buttons.append(button)
+        if single:
+            widgets.append(ctk.CTkButton(
+                tabs, text="+ Add case", width=110, height=30,
+                corner_radius=6, font=_BODY, fg_color="transparent",
+                border_width=1, text_color=("#1A1A1A", "#DCE4EE"),
+                hover_color=("#D5D9DE", "#3A3A3A"),
+                command=self._add_case))
+        _flow_group(tabs, widgets, gap_x=6, gap_y=2)
+
+        ctk.CTkLabel(
+            self.case_bar,
+            text=("A song plays whenever ANY of its cases matches. Each case has its own "
+                  "conditions and advanced settings." if single else
+                  "Editing the same case number across the selected songs; songs that "
+                  "don't have it are left alone. Select a single song to add or remove cases."),
+            font=_SMALL, text_color=("gray40", "gray70"), anchor="w",
+            justify="left", wraplength=620,
+        ).pack(fill="x", padx=4, pady=(2, 0))
+        self._restyle_case_tabs()
+
+    def _restyle_case_tabs(self):
+        """Highlight the active tab, and flag single-song cases that have no
+        conditions yet (they would always match).
+        """
+        buttons = self._case_tab_buttons
+        if not buttons:
+            return
+        groups = self._selected_groups()
+        group = groups[0] if len(groups) == 1 else None
+        for index, button in enumerate(buttons):
+            text = f"Case {index + 1}"
+            if group is not None and index < len(group) \
+                    and not group[index].has_any_condition():
+                text = self.WARNING_PREFIX + text
+            fg, hover, tc = (self._TAB_ON if index == self.active_case
+                             else self._TAB_OFF)
+            try:
+                button.configure(text=text, fg_color=fg, hover_color=hover,
+                                 text_color=tc)
+            except tk.TclError:
+                pass
+
+    def _select_case(self, index: int):
+        if index == self.active_case:
+            return
+        self.active_case = index
+        self.rebuild_editor(refresh_bar=False)
+
+    def _add_case(self):
+        groups = self._selected_groups()
+        if len(groups) != 1:
+            return
+        group = groups[0]
+        new_entry = _add_case_to(self.app.pack, group[0].id)
+        if new_entry is None:
+            return
+        self.active_case = len(group)            # the new, last case
+        self.refresh_tree(keep_selection=True)
+        self.rebuild_editor()
+        self.app.priority_tab.refresh()
+        self.app.set_status(
+            f"Added Case {len(group) + 1} to '{group[0].display_name()}'. Set its "
+            "conditions below, then use Priority Order > Auto-arrange to place it.")
+
+    def _remove_case(self):
+        groups = self._selected_groups()
+        if len(groups) != 1 or len(groups[0]) < 2:
+            return
+        group = groups[0]
+        index = max(0, min(self.active_case, len(group) - 1))
+        victim = group[index]
+        if not messagebox.askyesno(
+                "Remove case",
+                f"Remove Case {index + 1} from '{group[0].display_name()}'?\n\n"
+                "The song stays in the songpack; only this case's conditions "
+                "are deleted."):
+            return
+        old_row = group[0].id
+        remaining = [e for e in group if e.id != victim.id]
+        self.app.pack.entries = [
+            e for e in self.app.pack.entries if e.id != victim.id]
+        # The row is keyed by the first case, which may just have been removed.
+        new_row = remaining[0].id
+        self.selected_entry_ids = [
+            new_row if i == old_row else i for i in self.selected_entry_ids]
+        self.selected_entry_id = new_row
+        self.active_case = max(0, min(index, len(remaining) - 1))
+        self.refresh_tree(keep_selection=True)
+        self.rebuild_editor()
+        self.app.priority_tab.refresh()
+        self.app.set_status(
+            f"Removed Case {index + 1} from '{remaining[0].display_name()}'.")
 
     # -- helpers -------------------------------------------------
     def _available_biome_values(self, entry: Entry, is_tag: bool):
@@ -1245,7 +1513,11 @@ class LibraryTab(ctk.CTkFrame):
 
     # -- editor construction -------------------------------------------------
     def _build_editor_for(self, entry: Entry):
-        self._editor_showing_ids = frozenset([entry.id])
+        """Build the editor for one case (``entry``). Every widget below edits
+        this entry directly, exactly as it did before cases existed.
+        """
+        self._editor_showing_key = (
+            frozenset(self.selected_entry_ids), self.active_case)
         for w in self.editor_frame.winfo_children():
             w.destroy()
         self.category_vars = {}
@@ -1271,13 +1543,12 @@ class LibraryTab(ctk.CTkFrame):
 
     # -- songs dialog ---------------------------------------------------------
     def _edit_songs_clicked(self):
-        sel = self.tree.selection()
-        if len(sel) != 1:
+        groups = self._selected_groups()
+        if len(groups) != 1:
             return
-        entry = next(
-            (e for e in self.app.pack.entries if e.id == sel[0]), None)
-        if entry is None:
-            return
+        group = groups[0]
+        # The song list is edited for the case currently shown in the editor.
+        entry = group[max(0, min(self.active_case, len(group) - 1))]
         self._open_songs_dialog(entry)
 
     # -- audio editor ---------------------------------------------------------
@@ -1319,8 +1590,10 @@ class LibraryTab(ctk.CTkFrame):
         Kept out of the main editor because most entries only have one
         song and the list would dominate the condition UI.
         """
+        group = _group_of(self.app.pack, entry.id)
         window = tk.Toplevel(self)
-        window.title("Edit songs")
+        window.title("Edit songs" if len(group) < 2
+                     else f"Edit songs \u2014 Case {group.index(entry) + 1}")
         window.transient(self)
         window.grab_set()
         window.minsize(420, 260)
@@ -1334,7 +1607,10 @@ class LibraryTab(ctk.CTkFrame):
             body,
             text=("One song filename (without extension) per line.\n"
                   "The first line is the primary track shown in the list; any\n"
-                  "extra lines are fallback / mixed-in songs."),
+                  "extra lines are fallback / mixed-in songs."
+                  + ("" if len(group) < 2 else
+                     "\nThis list belongs to the case being edited; renaming the\n"
+                     "first line renames the song in every case.")),
             font=_BODY, justify="left", anchor="w",
         ).pack(anchor="w")
 
@@ -1346,16 +1622,25 @@ class LibraryTab(ctk.CTkFrame):
         btns.pack(fill="x")
 
         def save():
+            old_primary = entry.songs[0] if entry.songs else None
             entry.songs = [
                 line.strip()
                 for line in songs_box.get("1.0", "end").splitlines()
                 if line.strip()
             ]
+            new_primary = entry.songs[0] if entry.songs else None
+            if old_primary and new_primary and old_primary != new_primary:
+                # The primary song is the song's identity: keep the other
+                # cases pointing at it.
+                for sibling in group:
+                    if sibling is not entry and sibling.songs \
+                            and sibling.songs[0] == old_primary:
+                        sibling.songs[0] = new_primary
             window.destroy()
             # The display name (and therefore the tree row and editor title)
             # may have changed if songs were added or removed.
             self.editor_title.configure(
-                text=f"Conditions for: {entry.display_name()}")
+                text=f"Conditions for: {group[0].display_name()}")
             self.refresh_tree(keep_selection=True)
             self.app.priority_tab.refresh()
             self.app.set_status("Updated songs for this entry.")
@@ -1838,8 +2123,13 @@ class LibraryTab(ctk.CTkFrame):
                 anchor="w", justify="left",
             ).pack(anchor="w", padx=4, pady=(0, 6))
 
-        fallbacks = priority.find_broader_fallbacks(
-            entry, self.app.pack.entries)
+        # Other cases of this same song aren't "fallbacks": they already play
+        # this very song, so there is nothing to mix in from them.
+        fallbacks = [
+            fb for fb in priority.find_broader_fallbacks(
+                entry, self.app.pack.entries, limit=1000)
+            if _gid(fb) != _gid(entry)
+        ][:5]
         if fallbacks:
             ctk.CTkLabel(
                 info_body,
@@ -2080,6 +2370,7 @@ class LibraryTab(ctk.CTkFrame):
                     text=f"Rarity score: {priority.score_entry(entry)}   "
                     f"(higher = more specific = plays before broader/common entries)"
                 )
+        self._restyle_case_tabs()
         self.app.on_entry_conditions_changed(entry)
 
 
@@ -2137,8 +2428,11 @@ class PriorityTab(ctk.CTkFrame):
         # NOTE: iterate self.app.pack.entries directly, in its current
         # manual order. Do NOT call priority.order_entries() here, or
         # manual drag order gets thrown away on every refresh.
+        labels = _case_labels(self.app.pack)
         for i, entry in enumerate(self.app.pack.entries, start=1):
             name = entry.display_name()
+            if entry.id in labels:          # one of several cases of a song
+                name += f"  [{labels[entry.id]}]"
             if not entry.has_any_condition():
                 name = LibraryTab.WARNING_PREFIX + name
             self.tree.insert(
@@ -2313,6 +2607,35 @@ class App(ctk.CTk):
         self.library_tab.refresh_tree(keep_selection=True)
         self.priority_tab.refresh()
 
+    def on_pack_entries_changed(self):
+        """Entries were added, removed, or edited from somewhere other than
+        the Music & Conditions tab's own editor -- currently: the Biome
+        Simulator's right-click "edit songs for this biome" case editor
+        (biome_case_editor.py). Refresh every view of app.pack.entries so
+        the two tabs stay in agreement.
+        """
+        self.library_tab.refresh_tree(keep_selection=True)
+        self.priority_tab.refresh()
+        self.simulator_tab.refresh()
+
+    def focus_entry_in_library(self, entry_id: str) -> None:
+        """Switch to Music & Conditions and select the song row that owns
+        ``entry_id`` (its case group's primary entry). Used by the Biome
+        Simulator's case editor's "Open full editor" button, for the
+        biome/dimension/block/advanced-flag controls it doesn't duplicate.
+        """
+        group = case_grouping.group_of(self.pack_data, entry_id)
+        if not group:
+            return
+        row_id = group[0].id
+        self.notebook.set("Music & Conditions")
+        self.library_tab.refresh_tree(keep_selection=False)
+        try:
+            self.library_tab.tree.selection_set(row_id)
+            self.library_tab.tree.see(row_id)
+        except Exception:  # noqa: BLE001 - selection is a nicety, not the job
+            pass
+
     # -- target mod build -------------------------------------------
     def effective_mod_version(self):
         """The mod version this songpack is aimed at, or None when no
@@ -2326,14 +2649,8 @@ class App(ctk.CTk):
         """The Minecraft/mod version picker moved, so the condition editor
         has to re-gate itself against the new target.
         """
-        lib = self.library_tab
-        ids = set(lib.selected_entry_ids)
-        entries = [e for e in self.pack_data.entries if e.id in ids]
-        if lib.editor_outer.winfo_ismapped():
-            if len(entries) == 1:
-                lib._build_editor_for(entries[0])
-            elif len(entries) > 1:
-                lib._build_multi_editor_for(entries)
+        # Rebuilds the editor for the current selection *and* case tab.
+        self.library_tab.rebuild_editor(refresh_bar=False)
 
         version = self.effective_mod_version()
         problems = mod_versions.validate_pack(self.pack_data, version)
@@ -2378,10 +2695,8 @@ class App(ctk.CTk):
         the condition editor's biome list needs redrawing.
         """
         lib = self.library_tab
-        ids = set(lib.selected_entry_ids)
-        entries = [e for e in self.pack_data.entries if e.id in ids]
-        if len(entries) == 1 and lib.editor_outer.winfo_ismapped():
-            lib._build_editor_for(entries[0])
+        if len(lib.selected_entry_ids) == 1:
+            lib.rebuild_editor(refresh_bar=False)
         self.simulator_tab.on_biome_colors_changed()
 
     # -- menu -------------------------------------------------
@@ -2438,6 +2753,10 @@ class App(ctk.CTk):
             return
         try:
             self.pack_data = yaml_io.load_songpack(path)
+            # No separate grouping step needed on load any more: cases are
+            # derived live from each entry's primary song / biome
+            # conditions (see case_grouping.py), so they're correct the
+            # moment the entries exist.
             biomes, tags = biome_customization.load(path)
             attributes = biome_customization.load_attributes(path)
             mod_versions.apply_to_pack(self.pack_data, mod_versions.load(path))

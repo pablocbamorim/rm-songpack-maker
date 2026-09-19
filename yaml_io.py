@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Optional
+from typing import Dict, List, Optional, Tuple
 
 import yaml
 
@@ -14,15 +14,48 @@ DEFAULT_ENTRIES_ROOT_KEY = "entries"
 AUDIO_EXTENSIONS = (".mp3", ".ogg", ".wav")
 
 
+# ---------------------------------------------------------------------------
+# YAML output style
+#
+# MAKING_SONGPACKS.md writes every string in double quotes and indents list
+# items under their key, e.g.
+#
+#     - events: [ "DAY", "BIOME=MOUNTAIN" ]
+#       songs:
+#         - "ForTheKing"
+#
+# PyYAML's default output (plain scalars, "- " flush with the parent key) is
+# valid YAML that parses to exactly the same data, but we match the
+# documented style so files look like the ones the mod's author shows.
+# ---------------------------------------------------------------------------
 class _FlowList(list):
     pass
+
+
+class _Quoted(str):
+    """A string that is always written with double quotes."""
+
+
+class _SongpackDumper(yaml.Dumper):
+    def increase_indent(self, flow=False, indentless=False):
+        # Indent list items under their parent key instead of flush with it.
+        return super().increase_indent(flow, False)
+
+    def ignore_aliases(self, data):
+        # Never emit &id001 / *id001 anchors for repeated values.
+        return True
 
 
 def _flow_list_representer(dumper: yaml.Dumper, data: _FlowList):
     return dumper.represent_sequence("tag:yaml.org,2002:seq", data, flow_style=True)
 
 
-yaml.add_representer(_FlowList, _flow_list_representer)
+def _quoted_representer(dumper: yaml.Dumper, data: _Quoted):
+    return dumper.represent_scalar("tag:yaml.org,2002:str", str(data), style='"')
+
+
+_SongpackDumper.add_representer(_FlowList, _flow_list_representer)
+_SongpackDumper.add_representer(_Quoted, _quoted_representer)
 
 
 def _entry_looks_like_entry(obj) -> bool:
@@ -92,10 +125,71 @@ def load_songpack(path: str) -> Songpack:
     return pack
 
 
-def _entry_to_dict(entry: Entry) -> dict:
+# ---------------------------------------------------------------------------
+# Merging entries that share the same conditions
+#
+# MAKING_SONGPACKS.md lets one entry hold a pool of songs:
+#
+#     - events: [ "DAY", "BIOME=MOUNTAIN" ]
+#       songs:
+#         - "ForTheKing"
+#         - "Freedom"
+#
+# The editor keeps one entry per song (that is what the song list shows), so
+# two songs with the same conditions are two entries in the editor. They are
+# combined when the YAML is written, not in the editor, so the per-song rows
+# stay independently editable.
+#
+# Two entries are "the same" when they have the same set of event
+# requirements (order irrelevant, also inside "||" groups) AND the same
+# advanced flags -- merging entries that differ in allowFallback or
+# forceStop* would silently change how one of them behaves.
+#
+# The merged entry sits where its FIRST member was in the priority order.
+# ---------------------------------------------------------------------------
+def _merge_key(entry: Entry) -> tuple:
+    events = tuple(sorted(
+        " || ".join(sorted(p.strip() for p in str(ev).split("||") if p.strip()))
+        for ev in build_events(entry)
+    ))
+    return (
+        events,
+        bool(entry.allow_fallback),
+        bool(entry.force_stop_on_changed),
+        bool(entry.force_stop_on_valid),
+        bool(entry.force_stop_on_invalid),
+        bool(entry.force_start_on_valid),
+        float(entry.force_chance),
+    )
+
+
+def merge_equivalent_entries(entries: List[Entry]) -> List[Tuple[Entry, List[str]]]:
+    """Group entries with identical conditions and flags.
+
+    Returns a list of (representative_entry, songs) in priority order, where
+    `songs` is every song of the group, in order, without duplicates.
+    """
+    groups: Dict[tuple, List[Entry]] = {}
+    for entry in entries:
+        groups.setdefault(_merge_key(entry), []).append(entry)
+
+    merged: List[Tuple[Entry, List[str]]] = []
+    for members in groups.values():          # dicts keep first-seen order
+        songs: List[str] = []
+        for member in members:
+            for song in member.songs:
+                if song not in songs:
+                    songs.append(song)
+        merged.append((members[0], songs))
+    return merged
+
+
+def _entry_to_dict(entry: Entry, songs: Optional[List[str]] = None) -> dict:
+    if songs is None:
+        songs = entry.songs
     d = {
-        "events": _FlowList(build_events(entry)),
-        "songs": list(entry.songs),
+        "events": _FlowList(_Quoted(e) for e in build_events(entry)),
+        "songs": [_Quoted(s) for s in songs],
     }
     if entry.allow_fallback:
         d["allowFallback"] = True
@@ -112,20 +206,34 @@ def _entry_to_dict(entry: Entry) -> dict:
     return d
 
 
-def songpack_to_dict(pack: Songpack) -> dict:
+def songpack_to_dict(pack: Songpack, merge_equivalent: bool = True) -> dict:
+    if merge_equivalent:
+        entry_dicts = [_entry_to_dict(e, songs)
+                       for e, songs in merge_equivalent_entries(pack.entries)]
+    else:
+        entry_dicts = [_entry_to_dict(e) for e in pack.entries]
+
+    def q(value) -> _Quoted:
+        return _Quoted("" if value is None else str(value))
+
     data = {
-        "name": pack.name,
-        "version": pack.version,
-        "author": pack.author,
-        "description": pack.description,
-        "credits": pack.credits,
+        "name": q(pack.name),
+        "version": q(pack.version),
+        "author": q(pack.author),
+        "description": q(pack.description),
+        "credits": q(pack.credits),
         "musicSwitchSpeed": pack.music_switch_speed,
         "musicDelayLength": pack.music_delay_length,
-        (pack.entries_root_key or DEFAULT_ENTRIES_ROOT_KEY): [
-            _entry_to_dict(e) for e in pack.entries
-        ],
+        (pack.entries_root_key or DEFAULT_ENTRIES_ROOT_KEY): entry_dicts,
     }
     return data
+
+
+def expected_songs_after_save(pack: Songpack) -> List[str]:
+    """Flat song list a saved-and-reloaded file should contain (used by the
+    save verification step)."""
+    return [s for _e, songs in merge_equivalent_entries(pack.entries)
+            for s in songs]
 
 
 def save_songpack(pack: Songpack, folder: str, copy_music_from: Optional[str] = None) -> str:
@@ -134,8 +242,8 @@ def save_songpack(pack: Songpack, folder: str, copy_music_from: Optional[str] = 
 
     data = songpack_to_dict(pack)
     with open(yaml_path, "w", encoding="utf-8") as f:
-        yaml.dump(data, f, sort_keys=False,
-                  allow_unicode=True, default_flow_style=False)
+        yaml.dump(data, f, Dumper=_SongpackDumper, sort_keys=False,
+                  allow_unicode=True, default_flow_style=False, width=10000)
 
     if copy_music_from:
         _copy_referenced_music(pack, copy_music_from,

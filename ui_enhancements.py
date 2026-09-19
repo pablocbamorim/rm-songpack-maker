@@ -117,7 +117,9 @@ def install(app):
             return
         try:
             reloaded = yaml_io.load_songpack(path)
-            expected = [s for e in app.pack.entries for s in e.songs]
+            # Entries with identical conditions are written as one song
+            # pool, so compare against the merged grouping, not the raw list.
+            expected = yaml_io.expected_songs_after_save(app.pack)
             actual = [s for e in reloaded.entries for s in e.songs]
             if actual != expected:
                 raise ValueError(

@@ -191,6 +191,7 @@ class BiomeChart(ctk.CTkFrame):
         on_hover: Optional[Callable[[Optional[str]], None]] = None,
         tooltip_lines: Optional[Callable[[str], List[str]]] = None,
         action_labels: tuple = ("click to enable", "click to disable"),
+        on_right_click: Optional[Callable[[str], None]] = None,
     ):
         super().__init__(parent, fg_color="transparent")
         self._biomes = biomes
@@ -201,9 +202,14 @@ class BiomeChart(ctk.CTkFrame):
         #   on_hover(name | None)   -- fired when the biome under the pointer changes
         #   tooltip_lines(name)     -- extra tooltip lines shown under the coordinates
         #   action_labels           -- (text when off, text when on) for the last line
+        #   on_right_click(name)    -- fired on a right-click over a biome icon;
+        #                              used by the Biome Simulator to open the
+        #                              per-biome song/case editor without
+        #                              disturbing the left-click pin behaviour
         self._on_hover = on_hover
         self._tooltip_lines = tooltip_lines
         self._action_labels = action_labels
+        self._on_right_click = on_right_click
         self._reported_hover: Optional[str] = None
         self.pal = _palette(dark)
 
@@ -233,6 +239,7 @@ class BiomeChart(ctk.CTkFrame):
         self.canvas.bind("<ButtonRelease-1>", self._on_release)
         self.canvas.bind("<Leave>", self._on_leave)
         self.canvas.bind("<Button-1>", self._on_click)
+        self.canvas.bind("<Button-3>", self._on_right_click_event)
 
     # -- public helpers ---------------------------------------------------
     def set_dark(self, dark: bool) -> None:
@@ -563,6 +570,18 @@ class BiomeChart(ctk.CTkFrame):
         self._mouse = (event.x, event.y)
         self._on_toggle(icon.name)
         self.redraw()
+
+    def _on_right_click_event(self, event) -> None:
+        """Right-click a biome icon: hand off to on_right_click(name)
+        instead of toggling it. Ignored entirely when the chart wasn't
+        given a handler, and never fires from the resize grip.
+        """
+        if self._on_right_click is None or self._in_grip(event.x, event.y):
+            return
+        icon = self._hit(event.x, event.y)
+        if icon is None:
+            return
+        self._on_right_click(icon.name)
 
     def _on_drag(self, event) -> None:
         if not self._resizing:

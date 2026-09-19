@@ -32,6 +32,7 @@ import customtkinter as ctk
 
 import audio_io
 import audio_preview
+import biome_case_editor
 import biome_chart
 import biome_customization
 import constants as C
@@ -315,8 +316,11 @@ class SimulatorTab(ctk.CTkFrame):
 
         bar = ctk.CTkFrame(chart_wrap, fg_color="transparent")
         bar.pack(fill="x", padx=10, pady=(8, 0))
-        ctk.CTkLabel(bar, text="Biome map — hover to preview, click to pin",
-                     font=_BODY_BOLD).pack(side="left")
+        ctk.CTkLabel(
+            bar,
+            text="Biome map — hover to preview, click to pin, right-click to edit songs",
+            font=_BODY_BOLD,
+        ).pack(side="left")
         self.chart_dimension_var = tk.StringVar(value="All")
         ctk.CTkSegmentedButton(
             bar, values=self._DIMENSIONS, variable=self.chart_dimension_var,
@@ -333,6 +337,7 @@ class SimulatorTab(ctk.CTkFrame):
             on_hover=self._on_chart_hover,
             tooltip_lines=self._tooltip_lines,
             action_labels=("click to pin", "click to unpin"),
+            on_right_click=self._on_chart_right_click,
             dark=bool(self.app.settings.get("dark_theme", True)),
             height=380,
         )
@@ -483,6 +488,13 @@ class SimulatorTab(ctk.CTkFrame):
         self._preview = name
         if not self._pinned and not self._playlist_active:
             self._refresh_panel()
+
+    def _on_chart_right_click(self, name: str) -> None:
+        """Right-click a biome: open the per-biome song/case editor
+        (biome_case_editor.py) instead of pinning/unpinning it. Left-click
+        keeps its existing preview/pin behaviour untouched.
+        """
+        biome_case_editor.open_biome_case_editor(self.app, name)
 
     def _on_chart_click(self, name: str) -> None:
         self._preview = name
