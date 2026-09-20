@@ -74,6 +74,7 @@ for _name in (
     setattr(BiomeCaseEditorPanel, _name, getattr(BiomeCaseEditorWindow, _name))
 
 
+
 def open_biome_case_editor(app, biome_name: str) -> None:
     existing = _OPEN.get(biome_name)
     if existing is not None:
