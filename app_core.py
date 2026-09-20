@@ -29,6 +29,7 @@ import block_data
 import yaml_io
 import priority
 import condition_logic
+import conditions
 import biome_customization
 import biome_chart
 import mod_versions
@@ -37,6 +38,7 @@ import settings_tab
 import simulator_tab
 import case_grouping
 import scopes
+import pack_validation
 from models import Songpack, Entry, BiomeCondition, DimensionCondition, BlockCondition
 
 
@@ -379,7 +381,6 @@ class InfoTab(ctk.CTkFrame):
         self.version_var = tk.StringVar()
         self.author_var = tk.StringVar()
         self.description_var = tk.StringVar()
-        self.credits_var = tk.StringVar()
         self.switch_var = tk.StringVar()
         self.delay_var = tk.StringVar()
         self.root_key_var = tk.StringVar()
@@ -396,7 +397,6 @@ class InfoTab(ctk.CTkFrame):
             ("Version", self.version_var),
             ("Author", self.author_var),
             ("Description", self.description_var),
-            ("Credits", self.credits_var),
         ]
         r = 0
         for label, var in text_rows:
@@ -406,6 +406,17 @@ class InfoTab(ctk.CTkFrame):
                          font=_BODY).grid(
                 row=r, column=1, sticky="w", **pad)
             r += 1
+
+        # Credits is a YAML string that may legitimately span several lines
+        # (the template's does), so it gets a multi-line box. A single-line
+        # entry would show the line breaks as one run of text and made it easy
+        # to rewrite them by accident.
+        ctk.CTkLabel(container, text="Credits:", font=_BODY).grid(
+            row=r, column=0, sticky="ne", **pad)
+        self.credits_text = ctk.CTkTextbox(
+            container, width=55 * 8, height=84, font=_BODY)
+        self.credits_text.grid(row=r, column=1, sticky="w", **pad)
+        r += 1
 
         ctk.CTkLabel(container, text="Music Switch Speed:",
                      font=_BODY).grid(
@@ -553,7 +564,8 @@ class InfoTab(ctk.CTkFrame):
         self.version_var.set(p.version)
         self.author_var.set(p.author)
         self.description_var.set(p.description)
-        self.credits_var.set(p.credits)
+        self.credits_text.delete("1.0", "end")
+        self.credits_text.insert("1.0", p.credits or "")
         self.switch_var.set(p.music_switch_speed)
         self.delay_var.set(p.music_delay_length)
         self.root_key_var.set(p.entries_root_key)
@@ -564,7 +576,7 @@ class InfoTab(ctk.CTkFrame):
         p.version = self.version_var.get()
         p.author = self.author_var.get()
         p.description = self.description_var.get()
-        p.credits = self.credits_var.get()
+        p.credits = self.credits_text.get("1.0", "end-1c")
         p.music_switch_speed = self.switch_var.get() or "NORMAL"
         p.music_delay_length = self.delay_var.get() or "NORMAL"
         p.entries_root_key = self.root_key_var.get().strip() or "entries"
@@ -813,7 +825,15 @@ class LibraryTab(ctk.CTkFrame):
                                  for e in group for s in e.songs):
                 continue
             primary = group[0]
+            # A YAML entry can hold a POOL of songs; show every song of the
+            # row instead of only the first ("A + B, C").
+            pool = case_grouping.pool_songs(group)
             name = primary.display_name()
+            if len(pool) > 1:
+                extra = ", ".join(pool[1:4])
+                if len(pool) > 4:
+                    extra += f", +{len(pool) - 4} more"
+                name = f"{pool[0]}  +  {extra}"
             if len(group) > 1:
                 name += f"  \u00b7  {len(group)} cases"
             marks = sorted({e.scope for e in group
@@ -1463,6 +1483,24 @@ class LibraryTab(ctk.CTkFrame):
             text_color=("gray40", "gray70"),
         ).pack(anchor="w", padx=8, pady=(6, 2))
 
+    def _pool_banner(self, entry: Entry):
+        """When one entry holds several songs (a YAML song pool), say so: the
+        conditions edited here decide when ANY of them plays, and the list row
+        only names the first one as the case's identity.
+        """
+        if len(entry.songs) < 2:
+            return
+        ctk.CTkLabel(
+            self.editor_frame,
+            text=(f"This case is a song pool of {len(entry.songs)}: "
+                  + ", ".join(entry.songs[:6])
+                  + (f", +{len(entry.songs) - 6} more" if len(entry.songs) > 6 else "")
+                  + ". These conditions decide when ANY of them plays; "
+                  "use \"Edit songs…\" to change the pool."),
+            font=_SMALL, justify="left", wraplength=620,
+            text_color=("gray40", "gray70"),
+        ).pack(anchor="w", padx=8, pady=(2, 2))
+
     # -- fixed categories (with per-category OR/AND combine control) --------
     def _set_fixed_combine(self, entry: Entry, cat: str, value: str):
         """Single-entry editor: record the user's OR/AND choice for one
@@ -1553,6 +1591,7 @@ class LibraryTab(ctk.CTkFrame):
 
         # -- target banner --
         self._target_banner(self.editor_frame)
+        self._pool_banner(entry)
 
         # -- biome map chart: deliberately first, above every other group --
         self._build_biome_map_section(entry)
@@ -1818,10 +1857,21 @@ class LibraryTab(ctk.CTkFrame):
             if chart is not None and chart.winfo_exists():
                 self.after_idle(chart.redraw)
 
-    @staticmethod
-    def _active_biome_keys(entry: Entry) -> set:
-        return {biome_chart.normalize_name(b.value)
-                for b in entry.biomes if not b.is_tag}
+    def _active_biome_keys(self, entry: Entry) -> set:
+        """Chart icons to draw as enabled: every biome that any BIOME=
+        condition of the entry matches, by the mod's soft matching
+        (conditions.soft_match) and including conditions that live in a
+        verbatim / cross-category item. BIOME=forest therefore lights up
+        dark_forest, birch_forest, ... as it does in the game.
+        """
+        atoms = [a for a in condition_logic.entry_atoms(entry)
+                 if a.kind == conditions.KIND_BIOME]
+        if not atoms:
+            return set()
+        names = biome_customization.all_attributes(
+            self.app.biome_custom_attributes)
+        return {biome_chart.normalize_name(n) for n in names
+                if any(conditions.soft_match(a.value, n) for a in atoms)}
 
     def _on_chart_toggle(self, entry: Entry, name: str):
         key = biome_chart.normalize_name(name)
@@ -1829,6 +1879,15 @@ class LibraryTab(ctk.CTkFrame):
                    if not b.is_tag and biome_chart.normalize_name(b.value) == key]
         if matches:
             entry.biomes = [b for b in entry.biomes if b not in matches]
+        elif key in self._active_biome_keys(entry):
+            # Already matched by a broader BIOME= (or one inside a verbatim
+            # condition). Adding a duplicate would change nothing and removing
+            # the broad one is not what a click on this icon means.
+            self.app.set_status(
+                f"'{name}' is already matched by another BIOME= condition of this "
+                "case (a broader name, or one inside a custom condition). Edit or "
+                "remove that condition to change it.")
+            return
         else:
             entry.biomes.append(BiomeCondition(value=name, is_tag=False))
         # Update the Biome section below in place (rebuilding the whole
@@ -2119,8 +2178,8 @@ class LibraryTab(ctk.CTkFrame):
         self.allow_fallback_var = tk.BooleanVar(value=entry.allow_fallback)
         fallback_available = self._supports("allow_fallback")
         fallback_label = (
-            "allowFallback — once this entry's own song(s) are exhausted, let a broader\n"
-            "entry play instead of repeating (recommended ON, especially for rare/narrow entries)"
+            "allowFallback — once this entry's own song(s) are exhausted, let another valid\n"
+            "entry play instead of repeating (ReactiveMusic default: off)"
             + ("" if fallback_available else self._gate_suffix("allow_fallback"))
         )
         fallback_check = ctk.CTkCheckBox(
@@ -2194,8 +2253,11 @@ class LibraryTab(ctk.CTkFrame):
             "<FocusOut>", lambda _e: self._on_custom_changed(entry))
         ctk.CTkLabel(
             custom_body,
-            text=("Conditions loaded from an existing file that this editor's checkboxes\n"
-                  "couldn't fully represent land here verbatim instead of being lost."),
+            text=("Conditions the checkboxes and lists above can't represent exactly land here,\n"
+                  "one YAML item per line, verbatim: an OR across categories\n"
+                  "(BIOME=ocean || UNDERWATER), several OR groups in one category, or\n"
+                  "anything unrecognised. The simulator, priority scoring, biome views and\n"
+                  "version checks all read them; each line is AND'd with everything else."),
             font=_SMALL,
             text_color=("gray40", "gray70"), justify="left", anchor="w",
         ).pack(anchor="w", padx=4, pady=(0, 4))
@@ -3005,6 +3067,8 @@ class App(ctk.CTk):
                 return
         if not self._confirm_target_problems():
             return
+        if not self._confirm_pack_issues():
+            return
         folder = filedialog.askdirectory(
             title="Choose (or create) a folder to save this songpack into")
         if not folder:
@@ -3030,6 +3094,23 @@ class App(ctk.CTk):
             f"{os.path.join(folder, biome_customization.CONFIG_FILENAME)}\n\n"
             f"Target build saved to:\n"
             f"{os.path.join(folder, mod_versions.TARGET_FILENAME)}",
+        )
+
+    def _confirm_pack_issues(self) -> bool:
+        """Sanity check before writing (pack_validation.py): songless or
+        condition-less entries, a bad forceChance, entries that can never play.
+        Nothing is changed for the user; they decide whether to save anyway.
+        """
+        issues = pack_validation.validate_pack(self.pack_data)
+        if not issues:
+            return True
+        shown = "\n".join(f"\u2022 {i.message}" for i in issues[:12])
+        if len(issues) > 12:
+            shown += f"\n\u2026 and {len(issues) - 12} more"
+        return messagebox.askyesno(
+            "Check before saving",
+            f"{len(issues)} thing(s) look wrong in this songpack:\n\n{shown}\n\n"
+            "Nothing was changed. Save anyway?",
         )
 
     def _confirm_target_problems(self) -> bool:

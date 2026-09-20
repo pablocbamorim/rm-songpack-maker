@@ -1,0 +1,158 @@
+"""
+entry_pools.py
+---------------
+"Logical entries": the entries as they will exist in ReactiveMusic.yaml.
+
+WHY THIS EXISTS
+---------------
+The editor keeps one Entry per song (that is what the song list shows), but
+MAKING_SONGPACKS.md lets one YAML entry hold a POOL of songs. Entries that are
+the same rule with different songs are therefore combined when the YAML is
+written. If that combining changed *what the mod does*, the simulator (which
+used to read the un-merged list) and the saved file would disagree.
+
+THE RULE
+--------
+Only entries that are ADJACENT in priority order (after the global/default
+tiers are pinned to the bottom, see priority.py) and have the same logical
+conditions AND the same flags/scope/extra fields are merged. Merging a run of
+neighbours cannot change which entry wins anywhere, because nothing sits
+between them. Non-adjacent duplicates stay separate YAML entries, exactly as
+the editor lists them (the "A(BIOME=x) / B(DAY) / C(BIOME=x)" case no longer
+moves C's song above B).
+
+Everything that predicts the mod's behaviour (simulator, blocker check, save
+verification) must work on logical_view(), never on the raw list, so that the
+prediction and the saved file cannot drift apart.
+
+Nothing here touches tkinter or files.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import json
+from dataclasses import dataclass, field
+from typing import Dict, List, Tuple
+
+import conditions
+import constants as C
+from models import Entry
+
+
+def _scope_rank(entry: Entry) -> int:
+    return C.SCOPE_RANK.get(getattr(entry, "scope", C.SCOPE_NORMAL), 0)
+
+
+def scope_ordered(entries: List[Entry]) -> List[Entry]:
+    """Stable sort that only moves global/default entries below normal ones
+    (same rule as priority.scope_sorted, kept here to avoid an import cycle).
+    """
+    return sorted(entries, key=_scope_rank)
+
+
+def _extras_key(entry: Entry) -> str:
+    try:
+        return json.dumps(getattr(entry, "extra_fields", {}) or {},
+                          sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        return repr(getattr(entry, "extra_fields", None))
+
+
+def merge_key(entry: Entry) -> tuple:
+    """Two entries may share a song pool only if this is equal: same logical
+    conditions, same advanced flags (merging entries that differ in
+    allowFallback or forceStop* would silently change how one behaves), same
+    scope and same unknown YAML fields.
+    """
+    import condition_logic  # local: condition_logic imports models only
+    return (
+        condition_logic.canonical_events(entry),
+        bool(entry.allow_fallback),
+        bool(entry.force_stop_on_changed),
+        bool(entry.force_stop_on_valid),
+        bool(entry.force_stop_on_invalid),
+        bool(entry.force_start_on_valid),
+        float(entry.force_chance),
+        getattr(entry, "scope", C.SCOPE_NORMAL),
+        _extras_key(entry),
+    )
+
+
+def merge_groups(entries: List[Entry]) -> List[List[Entry]]:
+    """Runs of adjacent, mergeable entries (each run is one YAML entry), in
+    the order they are written.
+    """
+    groups: List[List[Entry]] = []
+    last_key = None
+    for entry in scope_ordered(entries):
+        key = merge_key(entry)
+        if groups and key == last_key:
+            groups[-1].append(entry)
+        else:
+            groups.append([entry])
+            last_key = key
+    return groups
+
+
+def pooled_songs(members: List[Entry]) -> List[str]:
+    """Every song of the run, in order, without duplicates."""
+    songs: List[str] = []
+    for member in members:
+        for song in member.songs:
+            if song not in songs:
+                songs.append(song)
+    return songs
+
+
+def merge_equivalent_entries(entries: List[Entry]) -> List[Tuple[Entry, List[str]]]:
+    """[(representative entry, pooled songs)] in write order."""
+    return [(members[0], pooled_songs(members))
+            for members in merge_groups(entries)]
+
+
+@dataclass
+class LogicalView:
+    """The pack as ReactiveMusic will read it.
+
+    entries    one Entry per YAML entry, in priority order. A single-member run
+               is the real Entry object; a merged run is a shallow copy of its
+               first member carrying the pooled songs (same ``id``), so it is
+               read-only for analysis -- edit ``members`` instead.
+    members    {logical entry id: the real entries it was made from}
+    rep_of     {any real entry id: id of the logical entry containing it}
+    positions  {logical entry id: 1-based position of its first member in the
+               editor's own list, which is the number the Priority tab shows}
+    """
+    entries: List[Entry] = field(default_factory=list)
+    members: Dict[str, List[Entry]] = field(default_factory=dict)
+    rep_of: Dict[str, str] = field(default_factory=dict)
+    positions: Dict[str, int] = field(default_factory=dict)
+
+
+def logical_view(entries: List[Entry]) -> LogicalView:
+    raw_index = {e.id: n for n, e in enumerate(entries, start=1)}
+    view = LogicalView()
+    for members in merge_groups(entries):
+        rep = members[0]
+        if len(members) == 1:
+            logical = rep
+        else:
+            logical = dataclasses.replace(rep, songs=pooled_songs(members))
+        view.entries.append(logical)
+        view.members[rep.id] = list(members)
+        view.positions[rep.id] = raw_index.get(rep.id, len(view.entries))
+        for member in members:
+            view.rep_of[member.id] = rep.id
+    return view
+
+
+def semantic_snapshot(entries: List[Entry]) -> list:
+    """What the saved file means, as comparable data: for every logical entry
+    in order (canonical conditions, song pool, flags, scope, extra fields).
+    Used by save verification to catch any reordering or merging surprise.
+    """
+    return [
+        (merge_key(logical), tuple(logical.songs))
+        for logical in logical_view(entries).entries
+    ]

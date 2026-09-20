@@ -150,9 +150,11 @@ COMMON_DIMENSIONS = [
     "minecraft:overworld", "minecraft:the_nether", "minecraft:the_end",
 ]
 
-DEFAULT_ALLOW_FALLBACK = False  # ReactiveMusic's documented default; users opt into fallback per entry
-# default matters for the "don't loop the
-# same rare song" requirement.
+# MAKING_SONGPACKS.md: "allowFallback (default false)". The editor follows that and
+# never writes allowFallback: false by itself; users opt into fallback per entry.
+# (An older comment here said the default was true, and the 0.5.0 release note
+# quoted in mod_versions.py reads as if it changed; unconfirmed, see the note there.)
+DEFAULT_ALLOW_FALLBACK = False
 DEFAULT_FORCE_CHANCE = 1.0
 
 MUSIC_SWITCH_SPEEDS = ["INSTANT", "SHORT", "NORMAL", "LONG"]

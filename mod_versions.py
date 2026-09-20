@@ -43,6 +43,8 @@ import tempfile
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
+import conditions
+
 TARGET_FILENAME = "songpack_target.json"
 
 # ---------------------------------------------------------------------------
@@ -129,6 +131,13 @@ FEATURE_MIN_MOD_VERSION = {
     # 0.5.0 release notes: "Added VILLAGE, BOSS, and NEARBY_MOBS as new
     # events!" and "Changed default behaviour of music picking to
     # 'fallback' ... can be disabled on entries with allowFallback: false"
+    #
+    # NOTE (unresolved discrepancy): that release note reads as if fallback
+    # became the default in 0.5.0, while the current MAKING_SONGPACKS.md states
+    # "allowFallback (default false)". The editor follows the canonical spec
+    # (constants.DEFAULT_ALLOW_FALLBACK = False) and never writes
+    # "allowFallback: false" by itself. Confirm against the mod's source or a
+    # test build before changing either.
     "VILLAGE": "0.5.0",
     "BOSS": "0.5.0",
     "NEARBY_MOBS": "0.5.0",
@@ -234,20 +243,23 @@ def resolve(mc_version: str, mod_version_override: str) -> Tuple[Optional[str], 
 # Validation of a whole songpack against a target
 # ---------------------------------------------------------------------------
 def unsupported_in_entry(entry, mod_version: Optional[str]) -> List[str]:
-    """Feature keys this entry uses that the target mod version predates."""
+    """Feature keys this entry uses that the target mod version predates.
+
+    Reads the entry's WHOLE parsed condition expression (conditions.py), not
+    just the GUI fields, so a gated event hiding inside a cross-category OR
+    ("BIOMETAG=IS_HOT || UNDERWATER") or a verbatim item is still found. Atoms
+    are classified, never substring-searched, so "BIOMETAGS" or a biome whose
+    name merely contains a token cannot cause a false positive.
+    """
     if not mod_version:
         return []
 
-    found = []
-    for options in entry.selected.values():
-        for token in options:
-            if not supports(mod_version, token) and token not in found:
-                found.append(token)
+    import condition_logic  # local import keeps this module dependency-free
 
-    if any(b.is_tag for b in entry.biomes) and not supports(mod_version, "BIOMETAG"):
-        found.append("BIOMETAG")
-    if entry.blocks and not supports(mod_version, "BLOCK"):
-        found.append("BLOCK")
+    found = []
+    for feature in conditions.features_used(condition_logic.entry_clauses(entry)):
+        if not supports(mod_version, feature) and feature not in found:
+            found.append(feature)
     if entry.allow_fallback and not supports(mod_version, "allow_fallback"):
         found.append("allow_fallback")
 

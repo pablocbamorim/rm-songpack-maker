@@ -7,16 +7,31 @@ that actually gets written to / read from ReactiveMusic.yaml.
 
 build_events(entry)   -> List[str]   (structured state -> yaml tokens)
 parse_events(entry, events_list)     (yaml tokens -> structured state, in place)
+entry_clauses(entry)  -> Expression  (the canonical AND-of-ORs, see conditions.py)
 
-Kept separate from models.py so the round-trip parsing logic (which has to
-be defensive about hand-written / unfamiliar yaml) doesn't clutter the
-plain data classes.
+THE ROUND-TRIP RULE
+-------------------
+The structured fields are only a *projection* of the entry's real logic (the
+`events` array is AND-of-ORs, see conditions.py). parse_events therefore moves
+a group of conditions into a structured field ONLY when the widgets can write
+it back with exactly the same meaning:
+
+  * one YAML item ("a || b")                     -> that category, OR mode
+  * several single-token items ("a", "b")        -> that category, AND mode
+  * anything else, e.g. TWO OR groups in one category
+    ("BIOME=a || BIOME=b", "BIOME=c || BIOME=d") -> kept VERBATIM, item by
+    item, in entry.custom_raw_conditions
+
+Keeping such items verbatim is lossless, and everything that analyses an entry
+(simulator, priority, biome cases, version gating) reads them through
+entry_clauses(), so they are not invisible to the rest of the app.
 """
 
 from __future__ import annotations
 
 from typing import List
 
+import conditions
 import constants as C
 from models import Entry, BiomeCondition, DimensionCondition, BlockCondition
 
@@ -32,7 +47,8 @@ def build_events(entry: Entry) -> List[str]:
     dimension, block) become one OR'd item or several AND'd items
     depending on that category's combine mode. Different categories are
     always AND'd against each other (separate array items), matching the
-    documented behaviour.
+    documented behaviour. Items kept verbatim in custom_raw_conditions are
+    appended unchanged (each is its own AND'd item).
     """
     events: List[str] = []
 
@@ -72,28 +88,54 @@ def build_events(entry: Entry) -> List[str]:
     return events
 
 
+def entry_clauses(entry: Entry) -> conditions.Expression:
+    """The entry's WHOLE condition (structured fields + verbatim raw items) as
+    the canonical AND-of-ORs expression. This is what analysis code must use
+    instead of looking at individual GUI fields.
+    """
+    return conditions.parse_expression(build_events(entry))
+
+
+def entry_atoms(entry: Entry) -> List[conditions.Atom]:
+    """Every atom anywhere in the entry's condition (any clause)."""
+    return list(conditions.iter_atoms(entry_clauses(entry)))
+
+
+def canonical_events(entry: Entry) -> frozenset:
+    """Order-insensitive logical form of the entry's condition."""
+    return conditions.canonical(build_events(entry))
+
+
 def _classify_token(token: str):
-    """Return (kind, payload) for a single (already OR-split) token."""
+    """Return (kind, payload) for a single (already OR-split) token, where
+    kind is what the STRUCTURED widgets can hold ("fixed", "biome",
+    "biometag", "dim", "block") or "unknown" (-> kept verbatim).
+
+    A token whose prefix is not written in the canonical upper case
+    (``biome=forest``) is treated as unknown on purpose: re-emitting it from a
+    widget would rewrite the user's text, so it stays verbatim (analysis code
+    still understands it, see conditions.parse_atom).
+    """
     token = token.strip()
-    if token.startswith(C.PREFIX_BIOMETAG):
-        return "biometag", token[len(C.PREFIX_BIOMETAG):]
-    if token.startswith(C.PREFIX_BIOME):
-        return "biome", token[len(C.PREFIX_BIOME):]
-    if token.startswith(C.PREFIX_DIM):
-        return "dim", token[len(C.PREFIX_DIM):]
-    if token.startswith(C.PREFIX_BLOCK):
-        payload = token[len(C.PREFIX_BLOCK):]
-        if "," in payload:
-            block_id, count = payload.rsplit(",", 1)
-            try:
-                count_i = int(count.strip())
-            except ValueError:
-                count_i = 1
-            return "block", (block_id.strip(), count_i)
-        return "block", (payload.strip(), 1)
-    if token in C.TOKEN_TO_CATEGORY:
-        return "fixed", token
-    return "unknown", token
+    atom = conditions.parse_atom(token)
+    if atom.kind == conditions.KIND_FIXED:
+        # Exact-case tokens only; "day" stays verbatim.
+        return ("fixed", token) if token in C.TOKEN_TO_CATEGORY else ("unknown", token)
+    prefix = {
+        conditions.KIND_BIOMETAG: C.PREFIX_BIOMETAG,
+        conditions.KIND_BIOME: C.PREFIX_BIOME,
+        conditions.KIND_DIM: C.PREFIX_DIM,
+        conditions.KIND_BLOCK: C.PREFIX_BLOCK,
+    }.get(atom.kind)
+    if prefix is None or not token.startswith(prefix):
+        return "unknown", token
+    if atom.kind == conditions.KIND_BLOCK:
+        return "block", (atom.value, atom.count)
+    if atom.kind == conditions.KIND_BIOMETAG:
+        return "biometag", token[len(prefix):]
+    if atom.kind == conditions.KIND_BIOME:
+        return "biome", token[len(prefix):]
+    return "dim", token[len(prefix):]
 
 
 def summarize_entry(entry: Entry, max_len: int = 60) -> str:
@@ -109,100 +151,95 @@ def summarize_entry(entry: Entry, max_len: int = 60) -> str:
     return text
 
 
+def _representable(groups: list) -> bool:
+    """Can ONE structured field + ONE combine mode reproduce these YAML items
+    (each a list of OR'd tokens) exactly? Yes for a single item, or for items
+    that are all single tokens (AND of them).
+    """
+    return len(groups) == 1 or all(len(g["tokens"]) == 1 for g in groups)
+
+
 def parse_events(entry: Entry, events: List[str]) -> None:
     """Populate an Entry's structured fields from a raw `events` array.
-    Anything that can't be cleanly represented by the structured UI
-    (e.g. an OR group mixing two different categories, or an unrecognised
-    token) is preserved verbatim in `entry.custom_raw_conditions` so
-    nothing is silently dropped on save.
 
-    Combine-mode detection: if a dynamic category's values all came from
-    a single array element joined with "||", that's OR. If they came from
-    two or more *separate* array elements, that's AND (separate elements
-    are always AND'd per the documented format). This is a best-effort
-    heuristic for hand-written files; anything genuinely ambiguous falls
-    back to AND, the more common real-world pattern (e.g. the fortress
-    example in MAKING_SONGPACKS.md).
+    Whatever the widgets cannot represent *exactly* (an OR group mixing two
+    categories, two OR groups in one category, an unrecognised token, ...) is
+    kept verbatim, one array item at a time, in `entry.custom_raw_conditions`
+    so neither text nor logic is ever changed (see the module docstring).
+
+    Combine mode: a category filled from a single "a || b" item is OR; from
+    several single-token items it is AND (separate items are always AND'd in
+    the documented format).
     """
-    biome_groups: List[list] = []
-    dim_groups: List[list] = []
-    block_groups: List[list] = []
-    fixed_groups: dict = {
-        cat: [] for cat in C.FIXED_CATEGORY_ORDER
-    }
+    # bucket -> list of {"raw": original item text, "tokens": [(kind, payload)]}
+    buckets: dict = {}
+
+    def add(bucket, raw_item, classified):
+        buckets.setdefault(bucket, []).append(
+            {"raw": raw_item, "tokens": classified})
 
     for raw_item in events:
         raw_item = str(raw_item)
         sub_tokens = [t.strip() for t in raw_item.split("||") if t.strip()]
         if not sub_tokens:
+            # An empty item is still user data; keep it as it is.
+            entry.custom_raw_conditions.append(raw_item)
             continue
 
         classified = [_classify_token(t) for t in sub_tokens]
         kinds = {k for k, _ in classified}
 
-        # Simple, single-category group -> map onto the structured UI.
         if kinds == {"fixed"}:
             cats = {C.TOKEN_TO_CATEGORY[payload] for _, payload in classified}
             if len(cats) == 1:
-                cat = next(iter(cats))
-                fixed_groups[cat].append(classified)
+                add(("fixed", next(iter(cats))), raw_item, classified)
                 continue
-
-        if kinds <= {"biome", "biometag"} and kinds:
-            biome_groups.append(classified)
+        elif kinds and kinds <= {"biome", "biometag"}:
+            add("biome", raw_item, classified)
+            continue
+        elif kinds == {"dim"}:
+            add("dim", raw_item, classified)
+            continue
+        elif kinds == {"block"}:
+            add("block", raw_item, classified)
             continue
 
-        if kinds == {"dim"}:
-            dim_groups.append(classified)
-            continue
-
-        if kinds == {"block"}:
-            block_groups.append(classified)
-            continue
-
-        # Mixed / unrecognised group -> preserve verbatim.
         entry.custom_raw_conditions.append(raw_item)
 
-    def _finalize(groups, combine_attr, append_fn):
-        if not groups:
-            return
-        if len(groups) == 1:
-            setattr(entry, combine_attr, C.COMBINE_OR if len(
-                groups[0]) > 1 else getattr(entry, combine_attr))
-        else:
-            setattr(entry, combine_attr, C.COMBINE_AND)
-        for group in groups:
-            for kind, payload in group:
-                append_fn(kind, payload)
-
-    for cat, groups in fixed_groups.items():
-        if not groups:
+    for bucket, groups in buckets.items():
+        if not _representable(groups):
+            # Lossless fallback: the exact original items.
+            entry.custom_raw_conditions.extend(g["raw"] for g in groups)
             continue
-        entry.selected.setdefault(cat, set())
-        for group in groups:
-            for _, payload in group:
-                entry.selected[cat].add(payload)
-        # One YAML array item containing several tokens is OR. Separate
-        # array items are AND, even when they happen to belong to the same
-        # fixed checkbox category.
-        entry.fixed_combine[cat] = (
-            C.COMBINE_OR if len(groups) == 1 and len(groups[0]) > 1
-            else C.COMBINE_AND if len(groups) > 1
-            else C.COMBINE_OR
-        )
 
-    _finalize(
-        biome_groups, "biome_combine",
-        lambda kind, payload: entry.biomes.append(
-            BiomeCondition(value=payload, is_tag=(kind == "biometag"))),
-    )
-    _finalize(
-        dim_groups, "dimension_combine",
-        lambda kind, payload: entry.dimensions.append(
-            DimensionCondition(value=payload)),
-    )
-    _finalize(
-        block_groups, "block_combine",
-        lambda kind, payload: entry.blocks.append(
-            BlockCondition(block_id=payload[0], min_count=payload[1])),
-    )
+        combine = (C.COMBINE_OR if len(groups) == 1 and len(groups[0]["tokens"]) > 1
+                   else C.COMBINE_AND if len(groups) > 1
+                   else None)          # one single token: mode is irrelevant
+
+        if isinstance(bucket, tuple):               # fixed category
+            cat = bucket[1]
+            entry.selected.setdefault(cat, set())
+            for g in groups:
+                for _, payload in g["tokens"]:
+                    entry.selected[cat].add(payload)
+            entry.fixed_combine[cat] = combine or C.COMBINE_OR
+        elif bucket == "biome":
+            if combine:
+                entry.biome_combine = combine
+            for g in groups:
+                for kind, payload in g["tokens"]:
+                    entry.biomes.append(
+                        BiomeCondition(value=payload, is_tag=(kind == "biometag")))
+        elif bucket == "dim":
+            if combine:
+                entry.dimension_combine = combine
+            for g in groups:
+                for _, payload in g["tokens"]:
+                    entry.dimensions.append(DimensionCondition(value=payload))
+        elif bucket == "block":
+            if combine:
+                entry.block_combine = combine
+            for g in groups:
+                for _, payload in g["tokens"]:
+                    entry.blocks.append(
+                        BlockCondition(block_id=payload[0], min_count=payload[1]))

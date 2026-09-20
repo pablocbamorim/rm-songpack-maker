@@ -12,8 +12,11 @@ MODEL (from MAKING_SONGPACKS.md)
 * ``allowFallback`` (default false): once every song of an entry has been
   played, fall through to the next valid entry. Without it the entry just
   repeats, so entries below it can never play in that situation.
-* ``BIOME=x`` / ``DIM=x`` are soft matches (substring), ``BIOMETAG=x`` may
-  omit the ``IS_`` prefix, ``BLOCK=id,n`` needs n nearby blocks.
+* ``BIOME=x`` / ``DIM=x`` are soft matches (substring; a value with a
+  namespace such as ``minecraft:forest`` is NOT reduced to the broad
+  substring "forest" -- see conditions.soft_match, the single implementation
+  every view shares), ``BIOMETAG=x`` may omit the ``IS_`` prefix,
+  ``BLOCK=id,n`` needs n nearby blocks.
 
 WHAT THE SIMULATOR CAN AND CAN'T KNOW
 -------------------------------------
@@ -33,9 +36,10 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 import condition_logic
+import conditions
 import constants as C
 from models import Entry
 
@@ -50,12 +54,8 @@ def normalize_biome(name: str) -> str:
     return text
 
 
-def normalize_tag(name: str) -> str:
-    """'IS_HOT', 'is_hot' and 'HOT' are the same tag (the prefix is optional)."""
-    text = str(name).strip().upper()
-    if text.startswith("IS_"):
-        text = text[3:]
-    return text
+# One implementation, shared with every other view (see conditions.py).
+normalize_tag = conditions.normalize_tag
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +235,7 @@ def parse_manual(text: str) -> ManualFacts:
         elif up.startswith(C.PREFIX_BIOME):
             facts.ignored.append(f"{line} (the biome comes from the map)")
         elif up.startswith(C.PREFIX_DIM):
-            facts.dims.add(normalize_biome(line[len(C.PREFIX_DIM):]))
+            facts.dims.add(line[len(C.PREFIX_DIM):].strip().lower())
         elif up.startswith(C.PREFIX_BLOCK):
             block_id, count = _parse_block(line[len(C.PREFIX_BLOCK):])
             facts.blocks[block_id] = max(count, facts.blocks.get(block_id, 0))
@@ -257,7 +257,7 @@ def make_state(biome: str, dimension: Optional[str], flags: Set[str],
                manual: Optional[ManualFacts] = None) -> SimState:
     manual = manual or ManualFacts()
     return SimState(
-        biome=normalize_biome(biome),
+        biome=conditions.full_id(biome),
         dimension=(dimension or "minecraft:overworld").lower(),
         flags=set(flags) | manual.flags,
         tags=biome_tags(biome) | manual.tags,
@@ -299,41 +299,37 @@ def eval_atom(token: str, st: SimState) -> Tuple[bool, Optional[str]]:
     """(is_true, note). `note` is set when a False result may just mean the
     simulator lacks the information (see module docstring).
     """
-    t = token.strip()
-    if not t:
+    atom = conditions.parse_atom(token)
+    if not atom.text:
         return False, None
-    up = t.upper()
 
-    if up in C.TOKEN_TO_CATEGORY:
-        return up in st.flags, None
+    if atom.kind == conditions.KIND_FIXED:
+        return atom.value in st.flags, None
 
-    if up.startswith(C.PREFIX_BIOMETAG):
-        raw_tag = t[len(C.PREFIX_BIOMETAG):]
-        tag = normalize_tag(raw_tag)
+    if atom.kind == conditions.KIND_BIOMETAG:
+        tag = normalize_tag(atom.value)
         if tag in st.tags:
             return True, None
         return False, (None if tag in known_tags()
-                       else f"BIOMETAG={raw_tag.strip()} (tag not in the built-in table)")
+                       else f"BIOMETAG={atom.value} (tag not in the built-in table)")
 
-    if up.startswith(C.PREFIX_BIOME):
-        want = normalize_biome(t[len(C.PREFIX_BIOME):])
-        return bool(want) and want in st.biome, None
+    if atom.kind == conditions.KIND_BIOME:
+        return conditions.soft_match(atom.value, st.biome), None
 
-    if up.startswith(C.PREFIX_DIM):
-        want = normalize_biome(t[len(C.PREFIX_DIM):])
-        ok = bool(want) and (want in st.dimension
-                             or any(want in d for d in st.dims))
+    if atom.kind == conditions.KIND_DIM:
+        ok = (conditions.soft_match(atom.value, st.dimension)
+              or any(conditions.soft_match(atom.value, d) for d in st.dims))
         return ok, None
 
-    if up.startswith(C.PREFIX_BLOCK):
-        block_id, need = _parse_block(t[len(C.PREFIX_BLOCK):])
+    if atom.kind == conditions.KIND_BLOCK:
+        block_id, need = normalize_biome(atom.value), atom.count
         if st.blocks.get(block_id, 0) >= need:
             return True, None
         return False, f"BLOCK={block_id},{need} (nearby blocks are unknown)"
 
-    if t.lower() in st.raw:
+    if atom.text.lower() in st.raw:
         return True, None
-    return False, f"'{t}' (unrecognised condition)"
+    return False, f"'{atom.text}' (unrecognised condition)"
 
 
 def evaluate_entry(entry: Entry, st: SimState) -> Tuple[bool, List[str]]:
@@ -391,6 +387,15 @@ class Plan:
         pl = self.playable()
         return pl[0] if pl else None
 
+    def first_item_of(self, entry_id: str) -> Optional[int]:
+        """Index of the first song of an entry, whether or not the fallback
+        chain reaches it -- forceStartMusicOnValid plays "this event" directly.
+        """
+        for i, it in enumerate(self.items):
+            if it.entry_id == entry_id:
+                return i
+        return None
+
     def find_song(self, song: Optional[str]) -> Optional[int]:
         for i, it in enumerate(self.items):
             if it.song == song:
@@ -418,11 +423,22 @@ class Plan:
         return pl[0]
 
 
-def build_plan(entries: List[Entry], st: SimState) -> Plan:
+def build_plan(entries: List[Entry], st: SimState,
+               positions: Optional[Dict[str, int]] = None) -> Plan:
+    """The ordered song list for a situation.
+
+    `entries` must be what the mod will read: pass entry_pools.logical_view(
+    pack.entries).entries, not the raw list, so entries that are saved as one
+    song pool are simulated as one. `positions` ({entry id: number}) lets the
+    plan show the numbers of the editor's own list (the Priority tab) instead
+    of positions in the logical list.
+    """
     plan = Plan()
     seen: Dict[str, PlanItem] = {}
     chain = True
     for index, entry in enumerate(entries, start=1):
+        if positions is not None:
+            index = positions.get(entry.id, index)
         valid, notes = evaluate_entry(entry, st)
         if not valid:
             if notes and entry.songs:
@@ -467,5 +483,64 @@ def should_force_stop(old_valid: Set[str], new_valid: Set[str],
         else:
             continue
         if wanted and rand() < entry.force_chance:
+            return entry
+    return None
+
+
+# ---------------------------------------------------------------------------
+# forceStart* / full transition model
+#
+# MAKING_SONGPACKS.md:
+#   forceStopMusicOnChanged/Valid/Invalid  stop the current music when the
+#       entry becomes valid and/or invalid;
+#   forceStartMusicOnValid  "If this event becomes valid, and the music stops
+#       naturally or because of forceStop, then play this event immediately.";
+#   forceChance  "If forceStop/Start is enabled, what is the chance it happens?"
+#
+# So a situation change has up to three separate effects, kept separate here
+# so they can be tested one at a time:
+#   1. an entry became valid / invalid            (became_valid / became_invalid)
+#   2. a forceStop* flag cuts the current song     (stop_entry)
+#   3. a forceStart flag is ARMED                  (armed_start): the entry
+#      became valid and its forceChance roll succeeded. It fires later, when
+#      the music stops (naturally, or right now if a forceStop just happened)
+#      and the entry is still valid -- see choose_force_start.
+# The documentation does not say whether the chance is rolled when the entry
+# becomes valid or when the music stops; it is rolled once, when it becomes
+# valid.
+# ---------------------------------------------------------------------------
+@dataclass
+class Transition:
+    became_valid: Set[str] = field(default_factory=set)
+    became_invalid: Set[str] = field(default_factory=set)
+    stop_entry: Optional[Entry] = None
+    armed_start: List[str] = field(default_factory=list)   # entry ids
+
+
+def evaluate_transition(old_valid: Set[str], new_valid: Set[str],
+                        entries: List[Entry],
+                        rand: Callable[[], float] = random.random
+                        ) -> Transition:
+    """Everything a change of situation does, given the entries the mod will
+    read (logical entries, see entry_pools).
+    """
+    result = Transition(became_valid=new_valid - old_valid,
+                        became_invalid=old_valid - new_valid)
+    result.stop_entry = should_force_stop(old_valid, new_valid, entries, rand)
+    for entry in entries:
+        if (entry.id in result.became_valid and entry.force_start_on_valid
+                and entry.songs and rand() < entry.force_chance):
+            result.armed_start.append(entry.id)
+    return result
+
+
+def choose_force_start(armed: Iterable[str], valid_ids: Set[str],
+                       entries: List[Entry]) -> Optional[Entry]:
+    """The armed entry that fires now that the music has stopped: the first
+    one in priority order that is still valid.
+    """
+    armed = set(armed)
+    for entry in entries:
+        if entry.id in armed and entry.id in valid_ids and entry.songs:
             return entry
     return None

@@ -6,12 +6,30 @@ from typing import Dict, List, Optional, Tuple
 import yaml
 
 import constants as C
-import priority
+import entry_pools
 import scopes
 from models import Songpack, Entry
 from condition_logic import build_events, parse_events
 
 DEFAULT_ENTRIES_ROOT_KEY = "entries"
+
+#: Keys this editor edits with widgets. Every other key of an entry / of the
+#: file is preserved verbatim (Entry.extra_fields / Songpack.extra_top_level).
+KNOWN_ENTRY_KEYS = frozenset({
+    "events", "songs", "allowFallback", "forceStopMusicOnChanged",
+    "forceStopMusicOnValid", "forceStopMusicOnInvalid",
+    "forceStartMusicOnValid", "forceChance",
+})
+KNOWN_TOP_LEVEL_KEYS = frozenset({
+    "name", "version", "author", "description", "credits",
+    "musicSwitchSpeed", "musicDelayLength",
+})
+
+
+class SongpackFormatError(ValueError):
+    """The file is not a songpack this editor can load without changing its
+    meaning. The message lists what is wrong and where, for a dialog box.
+    """
 
 AUDIO_EXTENSIONS = (".mp3", ".ogg", ".wav")
 
@@ -64,14 +82,104 @@ def _entry_looks_like_entry(obj) -> bool:
     return isinstance(obj, dict) and "events" in obj and "songs" in obj
 
 
+def _mentions_entry_keys(obj) -> bool:
+    return isinstance(obj, dict) and ("events" in obj or "songs" in obj)
+
+
 def _find_entries_root_key(data: dict) -> Optional[str]:
-    for key, value in data.items():
-        if isinstance(value, list) and value and all(_entry_looks_like_entry(v) for v in value):
-            return key
+    """The top-level key holding the entries list, or None when the file has
+    no entries at all.
+
+    A list counts as the entries list when at least ONE member looks like an
+    entry; the members are validated one by one afterwards, so a single bad
+    item is reported by position instead of making the whole list invisible
+    (which used to load as an EMPTY songpack and overwrite the file on the
+    next save).
+    """
+    candidates = [
+        key for key, value in data.items()
+        if isinstance(value, list) and any(_mentions_entry_keys(v) for v in value)
+    ]
+    if candidates:
+        return DEFAULT_ENTRIES_ROOT_KEY if DEFAULT_ENTRIES_ROOT_KEY in candidates \
+            else candidates[0]
+    if DEFAULT_ENTRIES_ROOT_KEY in data:
+        value = data[DEFAULT_ENTRIES_ROOT_KEY]
+        if value is None or value == []:
+            return DEFAULT_ENTRIES_ROOT_KEY
+        raise SongpackFormatError(
+            f"'{DEFAULT_ENTRIES_ROOT_KEY}' is present but none of its items "
+            "has 'events' or 'songs', so this does not look like a songpack "
+            "entries list.")
     return None
 
 
+def _describe(value) -> str:
+    text = repr(value)
+    return text if len(text) <= 40 else text[:37] + "..."
+
+
+def _str_list(raw: dict, key: str, where: str, problems: List[str]) -> List[str]:
+    value = raw.get(key)
+    if not isinstance(value, list):
+        problems.append(f"{where}: '{key}' must be a list, got {_describe(value)}.")
+        return []
+    out = []
+    for index, item in enumerate(value, start=1):
+        if isinstance(item, str):
+            out.append(item)
+        else:
+            problems.append(
+                f"{where}: '{key}' item {index} must be text, got "
+                f"{_describe(item)} (put it in quotes).")
+    return out
+
+
+def _bool_field(raw: dict, key: str, where: str, problems: List[str]) -> bool:
+    if key not in raw:
+        return False
+    value = raw[key]
+    if isinstance(value, bool):
+        return value
+    problems.append(
+        f"{where}: '{key}' must be true or false, got {_describe(value)}.")
+    return False
+
+
+def _parse_entry(raw, position: int, problems: List[str]) -> Entry:
+    where = f"Entry {position}"
+    entry = Entry()
+    events = _str_list(raw, "events", where, problems)
+    entry.songs = _str_list(raw, "songs", where, problems)
+    parse_events(entry, events)
+    entry.allow_fallback = _bool_field(raw, "allowFallback", where, problems)
+    entry.force_stop_on_changed = _bool_field(
+        raw, "forceStopMusicOnChanged", where, problems)
+    entry.force_stop_on_valid = _bool_field(
+        raw, "forceStopMusicOnValid", where, problems)
+    entry.force_stop_on_invalid = _bool_field(
+        raw, "forceStopMusicOnInvalid", where, problems)
+    entry.force_start_on_valid = _bool_field(
+        raw, "forceStartMusicOnValid", where, problems)
+
+    chance = raw.get("forceChance", C.DEFAULT_FORCE_CHANCE)
+    if isinstance(chance, bool) or not isinstance(chance, (int, float)):
+        problems.append(
+            f"{where}: 'forceChance' must be a number, got {_describe(chance)}.")
+    else:
+        entry.force_chance = float(chance)
+
+    entry.extra_fields = {k: v for k, v in raw.items()
+                          if k not in KNOWN_ENTRY_KEYS}
+    return entry
+
+
 def load_songpack(path: str) -> Songpack:
+    """Read a songpack. Raises SongpackFormatError (a ValueError) with every
+    problem found instead of guessing: a malformed entry, a wrongly typed
+    flag or a scalar where a list belongs is reported, never coerced or
+    silently dropped.
+    """
     if os.path.isdir(path):
         candidate = os.path.join(path, "ReactiveMusic.yaml")
         if not os.path.isfile(candidate):
@@ -100,29 +208,31 @@ def load_songpack(path: str) -> Songpack:
         root_key = _find_entries_root_key(data)
         if root_key:
             pack.entries_root_key = root_key
-            raw_entries = data[root_key]
+            raw_entries = data[root_key] or []
         else:
             pack.entries_root_key = DEFAULT_ENTRIES_ROOT_KEY
             raw_entries = []
+        pack.extra_top_level = {
+            k: v for k, v in data.items()
+            if k not in KNOWN_TOP_LEVEL_KEYS and k != root_key}
     else:
-        raise ValueError("Unrecognised ReactiveMusic.yaml structure")
+        raise SongpackFormatError("Unrecognised ReactiveMusic.yaml structure.")
 
-    for raw in raw_entries:
-        entry = Entry()
-        entry.songs = list(raw.get("songs", []) or [])
-        parse_events(entry, raw.get("events", []) or [])
-        entry.allow_fallback = bool(raw.get("allowFallback", False))
-        entry.force_stop_on_changed = bool(
-            raw.get("forceStopMusicOnChanged", False))
-        entry.force_stop_on_valid = bool(
-            raw.get("forceStopMusicOnValid", False))
-        entry.force_stop_on_invalid = bool(
-            raw.get("forceStopMusicOnInvalid", False))
-        entry.force_start_on_valid = bool(
-            raw.get("forceStartMusicOnValid", False))
-        entry.force_chance = float(
-            raw.get("forceChance", C.DEFAULT_FORCE_CHANCE))
-        pack.entries.append(entry)
+    problems: List[str] = []
+    for position, raw in enumerate(raw_entries, start=1):
+        if not _entry_looks_like_entry(raw):
+            problems.append(
+                f"Entry {position} in '{pack.entries_root_key}' is not an entry "
+                f"with both 'events' and 'songs' (got {_describe(raw)}).")
+            continue
+        pack.entries.append(_parse_entry(raw, position, problems))
+    if problems:
+        shown = "\n".join(f"- {p}" for p in problems[:12])
+        if len(problems) > 12:
+            shown += f"\n- ... and {len(problems) - 12} more"
+        raise SongpackFormatError(
+            "This songpack cannot be loaded without changing its meaning:\n"
+            + shown)
 
     # Editor-only global/default markers live next to the YAML (scopes.py).
     scopes.apply_to_entries(
@@ -143,56 +253,14 @@ def load_songpack(path: str) -> Songpack:
 #
 # The editor keeps one entry per song (that is what the song list shows), so
 # two songs with the same conditions are two entries in the editor. They are
-# combined when the YAML is written, not in the editor, so the per-song rows
-# stay independently editable.
-#
-# Two entries are "the same" when they have the same set of event
-# requirements (order irrelevant, also inside "||" groups) AND the same
-# advanced flags -- merging entries that differ in allowFallback or
-# forceStop* would silently change how one of them behaves.
-#
-# The merged entry sits where its FIRST member was in the priority order.
+# combined when the YAML is written -- but ONLY when they are adjacent in
+# priority order and identical in conditions, flags, scope and extra fields
+# (entry_pools.merge_groups). Merging non-adjacent entries used to move a later
+# entry's songs above the entries in between, changing what the mod plays.
+# The simulator reads entry_pools.logical_view(), i.e. exactly what is
+# written here, so the prediction and the file cannot drift apart.
 # ---------------------------------------------------------------------------
-def _merge_key(entry: Entry) -> tuple:
-    events = tuple(sorted(
-        " || ".join(sorted(p.strip() for p in str(ev).split("||") if p.strip()))
-        for ev in build_events(entry)
-    ))
-    return (
-        events,
-        bool(entry.allow_fallback),
-        bool(entry.force_stop_on_changed),
-        bool(entry.force_stop_on_valid),
-        bool(entry.force_stop_on_invalid),
-        bool(entry.force_start_on_valid),
-        float(entry.force_chance),
-        # A global/default entry must never merge into a normal one that
-        # happens to share its conditions.
-        getattr(entry, "scope", C.SCOPE_NORMAL),
-    )
-
-
-def merge_equivalent_entries(entries: List[Entry]) -> List[Tuple[Entry, List[str]]]:
-    """Group entries with identical conditions and flags.
-
-    Returns a list of (representative_entry, songs) in priority order, where
-    `songs` is every song of the group, in order, without duplicates.
-    """
-    groups: Dict[tuple, List[Entry]] = {}
-    # Global/default entries always go below normal ones (priority.py), no
-    # matter what order the list is in right now.
-    for entry in priority.scope_sorted(entries):
-        groups.setdefault(_merge_key(entry), []).append(entry)
-
-    merged: List[Tuple[Entry, List[str]]] = []
-    for members in groups.values():          # dicts keep first-seen order
-        songs: List[str] = []
-        for member in members:
-            for song in member.songs:
-                if song not in songs:
-                    songs.append(song)
-        merged.append((members[0], songs))
-    return merged
+merge_equivalent_entries = entry_pools.merge_equivalent_entries
 
 
 def _entry_to_dict(entry: Entry, songs: Optional[List[str]] = None) -> dict:
@@ -214,6 +282,9 @@ def _entry_to_dict(entry: Entry, songs: Optional[List[str]] = None) -> dict:
         d["forceStartMusicOnValid"] = True
     if entry.force_chance != C.DEFAULT_FORCE_CHANCE:
         d["forceChance"] = entry.force_chance
+    for key, value in (getattr(entry, "extra_fields", None) or {}).items():
+        if key not in d:
+            d[key] = value      # unknown keys survive load -> save unchanged
     return d
 
 
@@ -235,8 +306,12 @@ def songpack_to_dict(pack: Songpack, merge_equivalent: bool = True) -> dict:
         "credits": q(pack.credits),
         "musicSwitchSpeed": pack.music_switch_speed,
         "musicDelayLength": pack.music_delay_length,
-        (pack.entries_root_key or DEFAULT_ENTRIES_ROOT_KEY): entry_dicts,
     }
+    root = pack.entries_root_key or DEFAULT_ENTRIES_ROOT_KEY
+    for key, value in (getattr(pack, "extra_top_level", None) or {}).items():
+        if key not in data and key != root:
+            data[key] = value
+    data[root] = entry_dicts
     return data
 
 

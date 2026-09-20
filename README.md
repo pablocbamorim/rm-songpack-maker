@@ -47,7 +47,8 @@ This is especially useful when a songpack grows beyond a few entries. Instead of
 - **Biome Simulator** tab: choose a situation (time of day, weather, world height, underwater, plus any other condition), hover or click a biome on the map and see which songs ReactiveMusic would play there, in priority order. Double-click a song to start a playlist that imitates the mod.
 - **Global and default songs**: mark a song's case as *Global* (plays in every biome where its conditions hold) or *Default* (fills gaps where no biome-specific entry handles the situation). No per-biome copies are generated; the entry is written with no `BIOME=` and pinned below all normal entries, and **Check global songs…** on the Priority Order tab finds entries that block a global song and can turn `allowFallback` on for them.
 - Choose a target Minecraft / ReactiveMusic build so unsupported conditions are identified before saving.
-- Keep unsupported or custom conditions instead of losing them when editing a songpack.
+- Keep unsupported or custom conditions instead of losing them when editing a songpack: cross-category ORs such as `BIOME=ocean || UNDERWATER`, several OR groups in one category and unknown YAML keys (for example `alwaysPlay`) are preserved exactly, and the simulator, priority scoring, biome views and version checks all understand them.
+- **Check before saving**: songless entries, entries with no conditions and entries that can never play (a broader entry above them has no `allowFallback`) are listed before the file is written; you decide whether to save anyway.
 
 <p align="center">
   <img src="assets/infotabshowcase.png" alt="Soundpack Maker">
@@ -134,6 +135,8 @@ music/
 
 creates entries for `Route 10`, `Battle Theme`, and `Cave`.
 
+**Song pools on save:** entries that sit next to each other in the priority order and have identical conditions and flags are written as one YAML entry with several songs. Entries that are *not* adjacent are never merged, because that would move a song above the entries between them. The simulator uses exactly this saved shape. After saving and reloading, such a run appears as a single pool entry.
+
 **Important:** `Save Config…` currently does not copy the audio files. Make sure the referenced files are present in the songpack's `music` folder yourself.
 
 ### 4. Configure conditions
@@ -206,6 +209,7 @@ Open **Biome Simulator** to test a songpack without launching Minecraft.
 - Hover a biome on the map to see its songs in priority order; click it to pin the list. Double-click a song to start a playlist (needs the music folder loaded); the playing song gets a sound-wave marker.
 - The rules follow `MAKING_SONGPACKS.md`: the first valid entry wins, `allowFallback` decides whether the next valid entry is used once an entry's songs are exhausted (otherwise it loops and entries below it are shown dimmed as unreachable), and `forceStop*` flags cut the current song when the situation changes.
 - **Biome tags map:** the selector above the map switches between the Biomes map and a Biome tags map in the same style. Each tag is drawn at the average temperature/humidity of the biomes it contains (its colour is the average of theirs), and selecting one edits its `BIOMETAG=` cases. Songs added to a tag play in every biome the tag contains, and show up for those biomes on the Biomes map.
+- `forceStopMusicOn*` and `forceStartMusicOnValid` (with `forceChance`) are modelled: a forced start is armed when its entry becomes valid and plays when the music stops (naturally, via Next, or by a force stop).
 - Simplifications: songs play in list order (the mod may pick randomly), `musicDelayLength` silences are ignored, and the biome -> `BIOMETAG` table is built in and approximate. Entries that depend on facts the simulator cannot know are reported instead of silently hidden.
 
 ## Installing the finished songpack in Minecraft

@@ -20,7 +20,7 @@ module docstrings are unusually thorough; **read a module's own docstring
 before its code**, it usually explains the "why" you'd otherwise have to
 infer.
 
-## Mental model: one list, many views
+## Mental model: one list, one condition model, many views
 
 Everything revolves around a single mutable object graph:
 
@@ -47,6 +47,38 @@ syncing:
 Both groupings are *computed on the fly* from entry data (see
 `case_grouping.py`) — there's no separate "case id". Edit from either view
 and the other one is automatically consistent on next redraw.
+
+### The condition model (`conditions.py`)
+
+An entry's `events` array is an **AND of ORs** (array items are AND'd, `a || b`
+inside an item is OR'd). `conditions.py` is the *only* place that interprets
+that: it parses items into `Atom`s (fixed event / BIOME / BIOMETAG / DIM /
+BLOCK / unknown), provides `soft_match` (the mod's substring matching for
+`BIOME=`/`DIM=`), `canonical()` (order-insensitive form for comparing logic),
+`features_used()` (version gating) and `expression_implies()` (reachability).
+
+The structured `Entry` fields (checkbox sets, biome/dimension/block lists +
+OR/AND mode) are only a **projection** of that expression for what the widgets
+can write back *exactly*. `condition_logic.parse_events` moves a group into a
+structured field only when that is lossless; everything else (an OR across
+categories such as `BIOME=ocean || UNDERWATER`, two OR groups in one category,
+unknown tokens) stays verbatim, item by item, in `Entry.custom_raw_conditions`.
+**Analysis code must not look at individual GUI fields:** it calls
+`condition_logic.entry_clauses(entry)` / `entry_atoms(entry)`, which cover the
+structured fields *and* the verbatim items. The simulator, priority scoring,
+biome case discovery, chart highlighting, version gating and save validation
+all do.
+
+### Logical entries (`entry_pools.py`)
+
+The editor keeps one `Entry` per song, but YAML entries hold song *pools*.
+Entries that are **adjacent** in priority order and have the same canonical
+conditions, flags, scope and extra fields are written as one YAML entry.
+Non-adjacent duplicates are *not* merged (that used to hoist a later entry's
+songs above the entries between them). `entry_pools.logical_view()` is the pack
+exactly as ReactiveMusic will read it; the simulator, the blocker check and
+save verification all use it, never the raw list, so a prediction and the saved
+file cannot disagree.
 
 ## Startup chain
 
@@ -77,8 +109,11 @@ entry point) that also fixes tab-frame packing.
 |---|---|
 | `models.py` | `Entry`, `Songpack`, `BiomeCondition`, `DimensionCondition`, `BlockCondition` dataclasses. The single source of truth for songpack state. |
 | `constants.py` | Fixed event categories (Special/Time/Weather/.../Combat) straight from `MAKING_SONGPACKS.md`, biome/biome-tag name lists, rarity-score weights. |
-| `condition_logic.py` | Two-way conversion: `Entry`'s structured checkbox/list state ⇄ the raw `events: [...]` YAML string array. `build_events()` and `parse_events()`. |
-| `case_grouping.py` | Groups `pack.entries` by song ("cases of a song"), by biome ("cases of a biome") or, with `is_tag=True`, by biome tag ("cases of a tag"). Pure functions over the entries list. |
+| `condition_logic.py` | Two-way conversion: `Entry`'s structured checkbox/list state ⇄ the raw `events: [...]` YAML string array. `build_events()` and `parse_events()` (lossless: see above), plus `entry_clauses()`/`entry_atoms()`/`canonical_events()`. |
+| `conditions.py` | The canonical condition expression (AND of ORs of `Atom`s), the single `soft_match` for `BIOME=`/`DIM=`, canonical/implication helpers. No dependencies on models or the GUI. **Read this first** when a condition behaves differently in two views. |
+| `entry_pools.py` | Logical entries: which neighbouring editor entries are saved as one song pool (`merge_groups`, `logical_view`, `semantic_snapshot`). |
+| `pack_validation.py` | Save-time sanity report (no songs, no conditions, bad `forceChance`, entries that can never play). Warnings only; never edits the pack. |
+| `case_grouping.py` | Groups `pack.entries` by song ("cases of a song"), by biome ("cases of a biome", soft-matching, reading every atom incl. verbatim items) or, with `is_tag=True`, by biome tag ("cases of a tag"). Also song-pool helpers (`pool_songs`, `cases_containing_song`, `secondary_songs`). Pure functions over the entries list. |
 | `scopes.py` | "Global" / "default" songs. `Entry.scope` is editor-only metadata persisted in `songpack_scopes.json` (keyed by an entry's events + songs, so it survives a YAML round trip). Also the blocker check (`find_blockers`, `enable_fallback_on_blockers`): which entries above a global song stop it being reached in which biomes. No special YAML output: a global/default entry is a plain entry with no `BIOME=`, pinned below normal entries. |
 | `priority.py` | Rarity scoring (`score_entry`) that drives "Auto-arrange by rarity", plus `find_broader_fallbacks` (the "mix into this entry" variety helper). |
 | `mod_versions.py` | Feature-gate table: which ReactiveMusic mod version introduced which condition/flag, Minecraft-version → mod-version lookup, and the `songpack_target.json` sidecar (editor-only metadata, never written into the actual YAML). |
@@ -86,7 +121,7 @@ entry point) that also fixes tab-frame packing.
 ### 2. Persistence / I/O — read these for load/save behavior
 | File | Purpose |
 |---|---|
-| `yaml_io.py` | Load/save `ReactiveMusic.yaml`. Handles merging entries that share identical conditions into one YAML entry with a song pool, and matches the mod author's preferred YAML formatting style (quoted strings, indented lists). |
+| `yaml_io.py` | Load/save `ReactiveMusic.yaml`. Validates types on load (`SongpackFormatError` lists every problem; nothing is truthiness-coerced and a malformed entries list can no longer load as an empty pack), preserves unknown per-entry and top-level keys (`Entry.extra_fields`, `Songpack.extra_top_level`), writes song pools via `entry_pools`, and matches the mod author's preferred YAML style (quoted strings, indented lists). |
 | `biome_customization.py` | Two *separate* colour/attribute stores: per-songpack overrides (`biome_customization.json` next to a songpack) vs. bundled app defaults (`default_biome_colors.json` next to this script, shipped with the editor). Also owns the biome chart's temperature/humidity/erosion/weirdness attribute data, the bundled **tag membership** (`load_app_tag_members`, `tag_members`), and everything derived from it: a tag's averaged colour (`tag_color`) and averaged chart attributes (`tag_attributes`). |
 | `default_biome_colors.json` | The bundled defaults data file itself. Keys: `biomes` (name → colour), `biome_tags` (**tag → list of the biomes it contains** — tags have no colour of their own), `biome_dimensions`, `biome_attributes` (chart data). Rarely needs to be read in full — just know what the keys are. |
 | `audio_io.py` | Pure audio logic (no tkinter): probing, waveform peak extraction, trim/export via `soundfile`+`numpy`. Safe to call from worker threads. |
@@ -95,7 +130,7 @@ entry point) that also fixes tab-frame packing.
 ### 3. Simulation engine (pure logic, no GUI)
 | File | Purpose |
 |---|---|
-| `simulation.py` | "What would the mod actually play here?" engine behind the Biome Simulator tab. Implements the mod's real evaluation rules (top-to-bottom, first-valid-entry-wins, `allowFallback` chains, biome/tag/dimension/block matching, `forceStop*` transitions). Tag matching uses the bundled JSON's tag lists (`_tag_table`, with a small built-in fallback), and `make_tag_state` builds the "somewhere inside a biome of tag T" situation used by the tag map. Read this to understand simulator *semantics*; read `simulator_tab.py` for its UI. |
+| `simulation.py` | "What would the mod actually play here?" engine behind the Biome Simulator tab. Implements the mod's real evaluation rules (top-to-bottom, first-valid-entry-wins, `allowFallback` chains, biome/tag/dimension/block matching, and the transition model: `evaluate_transition` = forceStop* + armed forceStartMusicOnValid with `forceChance`). Feed it `entry_pools.logical_view(...).entries`, not the raw list. Tag matching uses the bundled JSON's tag lists (`_tag_table`, with a small built-in fallback), and `make_tag_state` builds the "somewhere inside a biome of tag T" situation used by the tag map. Read this to understand simulator *semantics*; read `simulator_tab.py` for its UI. |
 
 ### 4. GUI — main window & tabs
 | File | Purpose |
@@ -128,6 +163,14 @@ entry point) that also fixes tab-frame packing.
 | `ReactiveMusic.yaml-template.yaml` | A worked example songpack in the documented style — useful to sanity-check `yaml_io.py`'s output format. |
 | `README.md` | User-facing docs: features, how to use the GUI, install instructions. Useful for understanding intended *user* workflow, not implementation. |
 | `requirements.txt` | Runtime deps: PyYAML, pygame, customtkinter, soundfile, numpy. |
+
+## Tests
+
+`python -m unittest discover -s tests -v` (no GUI libraries needed). The
+regression tests in `tests/test_entry_logic.py` cover the fixtures of the entry-
+logic repair plan: round-trip stability of boolean structure, cross-category OR,
+merge/priority consistency, unknown-field preservation, type validation, soft
+matching, version gating, force transitions and save validation.
 
 ## Data flow for common tasks
 
@@ -185,6 +228,17 @@ bundled `default_biome_colors.json`), don't conflate them.
   workarounds — documented inline.
 - `case_grouping.py` groupings are *recomputed live*, never cached/stored —
   if you're looking for where a "case" is persisted, it isn't; it's derived.
+- The song-first list has one row per **primary** song (`songs[0]`). The other
+  members of a YAML song pool have no row of their own: the row label lists the
+  whole pool, search matches every pool member, and `case_grouping.
+  cases_containing_song` finds every entry a song plays in. (Giving pool members
+  their own rows needs row ids that are not entry ids; not done yet.)
+- Entries with **no `BIOME=`** and cross-category items are normal: a
+  `custom_raw_conditions` string is *not* opaque, it is parsed on demand by
+  `conditions.py`.
+- `allowFallback` defaults to **false** (MAKING_SONGPACKS.md). An old note in
+  `mod_versions.py` quotes a 0.5.0 release note that reads as if it became the
+  default; unconfirmed, the editor follows the spec.
 - `ui_enhancements.install()` reassigns some `app.action_*` methods *after*
   `app_core.py` defines them — several places in `app_core.py` call through
   a `lambda: self.action_x()` indirection specifically so this still works

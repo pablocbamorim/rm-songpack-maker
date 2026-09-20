@@ -46,6 +46,7 @@ import biome_case_editor
 import biome_chart
 import biome_customization
 import constants as C
+import entry_pools
 import simulation
 import yaml_io
 
@@ -183,6 +184,9 @@ class SimulatorTab(ctk.CTkFrame):
         self._more_open = False
         self._extra_vars: Dict[str, tk.BooleanVar] = {}
         self._plan_cache: Dict[str, simulation.Plan] = {}
+        self._view_cache: Optional[entry_pools.LogicalView] = None
+        # forceStartMusicOnValid entries waiting for the music to stop.
+        self._armed_start: Set[str] = set()
         self._facts_cache = None
         self._path_cache: Dict[str, Optional[str]] = {}
 
@@ -559,7 +563,18 @@ class SimulatorTab(ctk.CTkFrame):
 
     def _invalidate(self) -> None:
         self._plan_cache.clear()
+        self._view_cache = None
         self._facts_cache = None
+
+    def _view(self) -> entry_pools.LogicalView:
+        """The entries as ReactiveMusic will read them (neighbouring entries
+        with identical rules are one song pool, exactly as saved -- see
+        entry_pools.py). Every plan is built from this, never from the raw
+        list, so what is simulated is what the saved file does.
+        """
+        if self._view_cache is None:
+            self._view_cache = entry_pools.logical_view(self.app.pack.entries)
+        return self._view_cache
 
     def _facts(self):
         if self._facts_cache is None:
@@ -607,7 +622,8 @@ class SimulatorTab(ctk.CTkFrame):
             else:
                 state = simulation.make_state(
                     subject, self._dimension_of(subject), flags, manual)
-            plan = simulation.build_plan(self.app.pack.entries, state)
+            view = self._view()
+            plan = simulation.build_plan(view.entries, state, view.positions)
             self._plan_cache[subject] = plan
         return plan
 
@@ -785,6 +801,11 @@ class SimulatorTab(ctk.CTkFrame):
         self.mode_label.configure(text=mode)
 
         plan = self._plan_for(biome)
+        # The editor selects REAL entries; the plan lists logical ones (a run
+        # of identical neighbours is one song pool), so translate.
+        selected_id = (self._view().rep_of.get(self._selected_case_id,
+                                               self._selected_case_id)
+                       if self._selected_case_id else None)
         for i, item in enumerate(plan.items):
             playing = self._playlist_active and item.song == self._now_song
             wave = ""
@@ -805,8 +826,8 @@ class SimulatorTab(ctk.CTkFrame):
             if item.also_in:
                 notes.append("also " + ",".join(f"#{n}" for n in item.also_in))
             selected = (
-                self._selected_case_id is not None
-                and item.entry_id == self._selected_case_id
+                selected_id is not None
+                and item.entry_id == selected_id
             )
             if playing and selected:
                 tags = ("playing_selected",)
@@ -830,9 +851,9 @@ class SimulatorTab(ctk.CTkFrame):
                 parts.append(
                     "Dimmed = unreachable: an entry above has no allowFallback, "
                     "so it repeats instead of falling through.")
-        if self._selected_case_id:
+        if selected_id:
             selected = next(
-                (it for it in plan.items if it.entry_id == self._selected_case_id),
+                (it for it in plan.items if it.entry_id == selected_id),
                 None,
             )
             if selected is None:
@@ -869,20 +890,35 @@ class SimulatorTab(ctk.CTkFrame):
     # ------------------------------------------------------------------
     def _context_changed(self) -> None:
         if self._playlist_active and self._play_biome:
+            view = self._view()
             plan = self._plan_for(self._play_biome)
-            culprit = simulation.should_force_stop(
-                self._followed_valid, plan.valid_ids, self.app.pack.entries)
+            change = simulation.evaluate_transition(
+                self._followed_valid, plan.valid_ids, view.entries)
             self._followed_valid = set(plan.valid_ids)
+            # forceStartMusicOnValid waits until the music stops; an entry
+            # that stopped being valid in the meantime can no longer fire.
+            self._armed_start = ((self._armed_start & plan.valid_ids)
+                                 | set(change.armed_start))
+            culprit = change.stop_entry
             if culprit is not None:
-                number = self.app.pack.entries.index(culprit) + 1
-                first = plan.first_playable()
+                number = view.positions.get(culprit.id, "?")
+                forced = simulation.choose_force_start(
+                    self._armed_start, plan.valid_ids, view.entries)
+                if forced is not None:
+                    first = plan.first_item_of(forced.id)
+                    self._armed_start.discard(forced.id)
+                    note = (f"Entry #{number} has a forceStop rule for this change and "
+                            f"entry #{view.positions.get(forced.id, '?')} has "
+                            "forceStartMusicOnValid: starting it immediately.")
+                else:
+                    first = plan.first_playable()
+                    note = (f"Entry #{number} has a forceStop rule for this change: "
+                            "switching songs immediately.")
                 if first is None:
                     self._stop_playlist(
                         f"Entry #{number} forced a stop and nothing else can play.")
                     return
-                self.app.set_status(
-                    f"Entry #{number} has a forceStop rule for this change: "
-                    "switching songs immediately.")
+                self.app.set_status(note)
                 if not self._play_item(plan, first):
                     self._stop_playlist("No playable audio file was found.")
                     return
@@ -969,6 +1005,7 @@ class SimulatorTab(ctk.CTkFrame):
         self._playlist_active = True
         self._play_biome = biome
         self._followed_valid = set(plan.valid_ids)
+        self._armed_start = set()
         self._schedule_tick()
         self._refresh_panel()
         self._redraw_chart()
@@ -992,6 +1029,7 @@ class SimulatorTab(ctk.CTkFrame):
         self._now_path = None
         self._play_biome = None
         self._followed_valid = set()
+        self._armed_start = set()
         self._external_stop = False
         self._refresh_panel()
         self._redraw_chart()
@@ -1006,6 +1044,18 @@ class SimulatorTab(ctk.CTkFrame):
             return
         current = plan.find_song(self._now_song)
         nxt = plan.next_playable(current)
+        # The music stopped (naturally, or via Next): an armed
+        # forceStartMusicOnValid entry that is still valid plays first.
+        forced = simulation.choose_force_start(
+            self._armed_start, plan.valid_ids, self._view().entries)
+        if forced is not None:
+            index = plan.first_item_of(forced.id)
+            self._armed_start.discard(forced.id)
+            if index is not None:
+                nxt = index
+                self.app.set_status(
+                    f"Entry #{self._view().positions.get(forced.id, '?')} "
+                    "(forceStartMusicOnValid) starts now that the music stopped.")
         if nxt is None:
             self._stop_playlist(
                 "Playlist ended: no song can play for the current conditions.")

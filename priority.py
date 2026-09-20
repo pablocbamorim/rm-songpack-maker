@@ -19,13 +19,20 @@ gives us are:
 
 So "rarest conditions first" is implemented as a specificity/rarity
 *score* per entry (more, narrower conditions => higher score => earlier
-in the list), and "don't loop the same rare song" is implemented by
-defaulting allowFallback=True everywhere, plus an optional, explicit
-"variety mixing" helper (see `find_broader_fallbacks`) that lets the user
-knowingly copy a broader entry's songs into a narrower entry's own song
-list, so the broader song has a direct, immediate chance to be picked
-instead of waiting for full exhaustion. Both are clearly surfaced in the
-UI rather than being a hidden guess about the mod's internal randomness.
+in the list). "Don't loop the same rare song" is left to the user's
+explicit choice of allowFallback per entry: MAKING_SONGPACKS.md documents
+allowFallback as default FALSE, and the editor follows that (an older
+comment here claimed it defaulted to true; it does not, and nothing writes
+allowFallback: false on its own). An optional, explicit "variety mixing"
+helper (see `find_broader_fallbacks`) lets the user knowingly copy a broader
+entry's songs into a narrower entry's own song list, so the broader song has
+a direct, immediate chance to be picked instead of waiting for full
+exhaustion. Both are clearly surfaced in the UI rather than being a hidden
+guess about the mod's internal randomness.
+
+Every entry is scored from its WHOLE parsed condition (see conditions.py), so
+cross-category / verbatim items such as "BIOME=ocean || UNDERWATER" count by
+what they actually require instead of a flat bonus.
 """
 
 from __future__ import annotations
@@ -33,7 +40,10 @@ from __future__ import annotations
 import math
 from typing import List
 
+import condition_logic
+import conditions
 import constants as C
+import entry_pools
 from models import Entry, Songpack
 
 
@@ -78,11 +88,41 @@ def score_entry(entry: Entry) -> float:
             block_score /= len(entry.blocks)
         score += block_score
 
-    # Custom/raw conditions we couldn't parse still likely represent real
-    # constraints, so give them a small flat bonus each rather than zero.
-    score += 1.5 * len(entry.custom_raw_conditions)
+    # Verbatim items (cross-category ORs, several OR groups in one category,
+    # unrecognised tokens) are scored from what they actually contain.
+    for item in entry.custom_raw_conditions:
+        score += clause_score(conditions.parse_item(item))
 
     return round(score, 3)
+
+
+def atom_weight(atom: conditions.Atom) -> float:
+    """Rarity weight of one condition (same weights as the structured part)."""
+    if atom.kind == conditions.KIND_FIXED:
+        cat = C.TOKEN_TO_CATEGORY.get(atom.value)
+        return C.CATEGORY_WEIGHTS.get(cat, 2.0)
+    if atom.kind == conditions.KIND_BIOME:
+        return C.BIOME_NAME_WEIGHT
+    if atom.kind == conditions.KIND_BIOMETAG:
+        return C.BIOME_TAG_WEIGHT
+    if atom.kind == conditions.KIND_DIM:
+        return C.DIMENSION_WEIGHT
+    if atom.kind == conditions.KIND_BLOCK:
+        return C.BLOCK_BASE_WEIGHT + math.log(
+            max(atom.count, 1) + 1, C.BLOCK_COUNT_LOG_BASE)
+    return 1.5          # unrecognised token: still probably a real constraint
+
+
+def clause_score(clause: conditions.Clause) -> float:
+    """Rarity of one OR-group: the average weight of its options, divided by
+    how many there are (an OR of n options is n times easier to satisfy).
+    For n options of one fixed category this is exactly weight / n, the same
+    rule the structured checkboxes use.
+    """
+    if not clause:
+        return 0.0
+    weights = [atom_weight(a) for a in clause]
+    return (sum(weights) / len(weights)) / len(weights)
 
 
 def scope_rank(entry: Entry) -> int:
@@ -112,7 +152,17 @@ def auto_priority_order(entries: List[Entry]) -> List[Entry]:
     relative order (stable sort) so re-running this after a manual tweak
     doesn't needlessly shuffle unrelated entries.
     """
-    return sorted(entries, key=lambda e: (scope_rank(e), -score_entry(e)))
+    # Entries that are the same rule (same merge key) sort next to each other
+    # inside their score tier. Otherwise two songs with identical conditions
+    # could be separated by an unrelated entry of equal score, and would then
+    # be saved as two separate entries instead of one song pool (entry_pools
+    # only merges neighbours), leaving the second one unreachable unless it
+    # has allowFallback.
+    first_seen: dict = {}
+    for index, entry in enumerate(entries):
+        first_seen.setdefault(entry_pools.merge_key(entry), index)
+    return sorted(entries, key=lambda e: (
+        scope_rank(e), -score_entry(e), first_seen[entry_pools.merge_key(e)]))
 
 
 def order_entries(entries: List[Entry]) -> List[Entry]:
@@ -142,6 +192,11 @@ def is_broader_than(candidate: Entry, specific: Entry) -> bool:
     whenever specific is). This is what makes candidate a sensible
     "fallback filler" to mix into `specific`'s own song rotation.
     """
+    if candidate.custom_raw_conditions:
+        # The subset test below only understands the structured fields; a
+        # verbatim/cross-category item could make the candidate NARROWER than
+        # it looks, so never claim it is guaranteed valid.
+        return False
     cand_cats = condition_categories_present(candidate)
     spec_cats = condition_categories_present(specific)
     if not cand_cats or not (cand_cats < spec_cats):
@@ -181,3 +236,33 @@ def find_broader_fallbacks(target: Entry, all_entries: List[Entry], limit: int =
     ]
     candidates.sort(key=score_entry)
     return candidates[:limit]
+
+
+# ---------------------------------------------------------------------------
+# Reachability hazards (used by the save-time report)
+# ---------------------------------------------------------------------------
+def find_unreachable_hazards(entries: List[Entry]) -> List[tuple]:
+    """[(entry, blocker)] pairs where `entry` can never play because an entry
+    ABOVE it is valid whenever `entry` is and has no allowFallback (so it
+    repeats its own songs and never falls through).
+
+    Works on the logical entries the mod will read (entry_pools) and on the
+    full parsed expressions (conditions.expression_implies, sound but not
+    complete: it can miss a hazard, it does not invent one). Global/default
+    entries are skipped: sitting below broader entries is what they are for
+    (see scopes.py for the dedicated global check).
+    """
+    logical = entry_pools.logical_view(entries).entries
+    exprs = [condition_logic.entry_clauses(e) for e in logical]
+    hazards = []
+    for j, entry in enumerate(logical):
+        if not entry.songs or getattr(entry, "scope", C.SCOPE_NORMAL) != C.SCOPE_NORMAL:
+            continue
+        for i in range(j):
+            above = logical[i]
+            if not above.songs or above.allow_fallback:
+                continue
+            if conditions.expression_implies(exprs[j], exprs[i]):
+                hazards.append((entry, above))
+                break
+    return hazards

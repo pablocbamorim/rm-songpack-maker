@@ -47,6 +47,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 import condition_logic
 import constants as C
+import entry_pools
 import simulation
 from models import Entry
 
@@ -185,9 +186,16 @@ def _scenarios(entry: Entry) -> List[List[str]]:
 
 def find_blockers(entries: List[Entry],
                   biomes: Dict[str, str]) -> List[Blocker]:
-    """Which entries keep a GLOBAL entry from being reached, and where."""
+    """Which entries keep a GLOBAL entry from being reached, and where.
+
+    Works on the logical entries (entry_pools): what the mod will read, i.e.
+    neighbouring entries that are saved as one song pool count as one. The
+    returned Blocker entries are those logical entries (same ``id`` as their
+    first real entry); use enable_fallback_on_blockers to change the real ones.
+    """
+    logical = entry_pools.logical_view(entries).entries
     found: Dict[Tuple[str, str], Blocker] = {}
-    for scoped in entries:
+    for scoped in logical:
         if (getattr(scoped, "scope", None) != C.SCOPE_GLOBAL
                 or not scoped.songs or scoped.biomes):
             continue
@@ -195,13 +203,13 @@ def find_blockers(entries: List[Entry],
             manual = simulation.parse_manual("\n".join(atoms))
             for biome, dimension in biomes.items():
                 state = simulation.make_state(biome, dimension, set(), manual)
-                plan = simulation.build_plan(entries, state)
+                plan = simulation.build_plan(logical, state)
                 if scoped.id not in plan.valid_ids:
                     continue      # e.g. DIM= mismatch: not this biome's business
                 items = [i for i in plan.items if i.entry_id == scoped.id]
                 if not items or any(i.reachable for i in items):
                     continue
-                blocker = next((e for e in entries
+                blocker = next((e for e in logical
                                 if e.id == plan.terminal_entry_id), None)
                 if blocker is None:
                     continue
@@ -216,17 +224,20 @@ def enable_fallback_on_blockers(entries: List[Entry],
                                 biomes: Dict[str, str]) -> List[Entry]:
     """Turn allowFallback on for blocking entries until no global entry is
     blocked any more (one blocker can hide the next one below it). Returns
-    the entries that were changed, in the order they were changed.
+    the real entries that were changed, in the order they were changed. A
+    blocker that is a merged song pool is changed on every one of its members,
+    so they stay mergeable.
     """
     changed: List[Entry] = []
     for _ in range(len(entries) + 1):
-        blockers = find_blockers(entries, biomes)
+        view = entry_pools.logical_view(entries)
         progressed = False
-        for item in blockers:
-            if not item.blocker.allow_fallback:
-                item.blocker.allow_fallback = True
-                changed.append(item.blocker)
-                progressed = True
+        for item in find_blockers(entries, biomes):
+            for member in view.members.get(item.blocker.id, [item.blocker]):
+                if not member.allow_fallback:
+                    member.allow_fallback = True
+                    changed.append(member)
+                    progressed = True
         if not progressed:
             break
     return changed

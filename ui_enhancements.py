@@ -23,6 +23,7 @@ from tkinter import filedialog, messagebox, ttk
 
 import audio_io
 import audio_preview
+import entry_pools
 import yaml_io
 from models import Entry
 
@@ -124,6 +125,19 @@ def install(app):
             if actual != expected:
                 raise ValueError(
                     "Saved YAML does not contain the same song entries as the editor.")
+            # Songs alone are not enough: compare what the file MEANS (canonical
+            # conditions, song pools, flags, scope, unknown fields, and the
+            # priority order of the entries as ReactiveMusic will read them).
+            if (entry_pools.semantic_snapshot(app.pack.entries)
+                    != entry_pools.semantic_snapshot(reloaded.entries)):
+                raise ValueError(
+                    "The saved YAML does not mean the same thing as the editor: "
+                    "an entry's conditions, flags, song pool or priority position "
+                    "differ after reloading it.")
+            if app.pack.extra_top_level != reloaded.extra_top_level:
+                raise ValueError(
+                    "Top-level keys that the editor does not edit were not "
+                    "preserved in the saved YAML.")
         except Exception as exc:
             messagebox.showerror("Save verification failed", str(exc))
             return

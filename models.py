@@ -91,6 +91,12 @@ class Entry:
     # and scopes.py). Persisted in songpack_scopes.json, not in the YAML.
     scope: str = C.SCOPE_NORMAL
 
+    # Per-entry YAML keys this editor has no widget for (e.g. the template's
+    # ``alwaysPlay: true``). Kept exactly as parsed and written back on save,
+    # so load -> save never destroys user-authored data. Entries with
+    # different extras are never merged into one song pool.
+    extra_fields: dict = field(default_factory=dict)
+
     def display_name(self) -> str:
         if not self.songs:
             return "(no song assigned)"
@@ -125,6 +131,10 @@ class Songpack:
     platform: str = ""            # Fabric / NeoForge / Forge, metadata only
 
     entries: List[Entry] = field(default_factory=list)
+
+    # Top-level YAML keys this editor does not know (kept verbatim and written
+    # back before the entries list).
+    extra_top_level: dict = field(default_factory=dict)
 
     # The top-level YAML key entries were found under when loading an
     # existing file (e.g. "entries" or "songs"), so we can round-trip it.

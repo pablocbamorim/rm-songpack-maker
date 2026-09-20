@@ -37,6 +37,8 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
+import condition_logic
+import conditions
 import constants as C
 from models import BiomeCondition, Entry, Songpack
 from simulation import biome_tags, normalize_tag
@@ -62,6 +64,41 @@ def group_by_song(entries: List[Entry]) -> List[List[Entry]]:
     for entry in entries:
         by_gid.setdefault(gid(entry), []).append(entry)
     return list(by_gid.values())
+
+
+def pool_songs(group: List[Entry]) -> List[str]:
+    """Every distinct song used by the cases of a row, in order. A YAML entry
+    can hold a POOL of songs, so a row is not only its primary song.
+    """
+    songs: List[str] = []
+    for entry in group:
+        for song in entry.songs:
+            if song not in songs:
+                songs.append(song)
+    return songs
+
+
+def cases_containing_song(entries: List[Entry], song: str) -> List[Entry]:
+    """Every entry whose pool contains `song` -- primary OR not. This is the
+    lookup a song-centric view must use: `gid()` only knows the first song, so
+    a pool member such as the second song of "Freedom, WorldUnbound" has no
+    row of its own, but it does play under this entry's conditions.
+    """
+    return [e for e in entries if song in e.songs]
+
+
+def secondary_songs(entries: List[Entry]) -> Dict[str, List[Entry]]:
+    """{song: entries that contain it only as a NON-primary pool member}, for
+    songs that never head an entry of their own (so the list has no row for
+    them).
+    """
+    primary = {e.songs[0] for e in entries if e.songs}
+    found: Dict[str, List[Entry]] = {}
+    for entry in entries:
+        for song in entry.songs[1:]:
+            if song not in primary:
+                found.setdefault(song, []).append(entry)
+    return found
 
 
 def group_of(pack: Songpack, entry_id: str) -> List[Entry]:
@@ -109,10 +146,15 @@ def case_labels(pack: Songpack) -> Dict[str, str]:
 # ---------------------------------------------------------------------------
 def biome_cases(pack: Songpack, biome_name: str,
                 is_tag: bool = False) -> List[Entry]:
-    """Entries whose ``biomes`` list contains a plain ``BIOME=`` match for
-    ``biome_name`` (a biome *tag* condition doesn't count -- a tag can
-    cover many biomes at once, so it isn't "a case of this one biome"),
-    in priority order.
+    """Entries that apply to ``biome_name``, in priority order.
+
+    A plain biome matches an entry when ANY ``BIOME=`` condition anywhere in
+    its expression soft-matches it (conditions.soft_match: ``BIOME=forest``
+    is a case of dark_forest too, as it is for the mod), including conditions
+    that live in a verbatim / cross-category item such as
+    ``BIOME=ocean || UNDERWATER``. A ``BIOMETAG=`` condition is also a case of
+    every biome its tag contains. Such matches are a derived view: the Entry
+    itself is never expanded.
 
     With ``is_tag=True`` it is the mirror image: entries carrying a
     ``BIOMETAG=`` condition for the tag ``biome_name``. Tags compare the way
@@ -122,31 +164,56 @@ def biome_cases(pack: Songpack, biome_name: str,
         key = normalize_tag(biome_name)
         return [
             e for e in pack.entries
-            if any(b.is_tag and normalize_tag(b.value) == key for b in e.biomes)
+            if any(a.kind == conditions.KIND_BIOMETAG
+                   and normalize_tag(a.value) == key
+                   for a in condition_logic.entry_atoms(e))
         ]
 
-    # A BIOMETAG condition is also a valid case of every biome contained by
-    # that tag. This is a derived view; the Entry itself is never expanded.
     tags_for_biome = biome_tags(biome_name)
     return [
         e for e in pack.entries
-        if any(
-            ((not b.is_tag) and b.value == biome_name)
-            or (b.is_tag and normalize_tag(b.value) in tags_for_biome)
-            for b in e.biomes
-        )
+        if any(_atom_covers_biome(a, biome_name, tags_for_biome)
+               for a in condition_logic.entry_atoms(e))
     ]
 
 
+def _atom_covers_biome(atom, biome_name: str, tags_for_biome) -> bool:
+    if atom.kind == conditions.KIND_BIOME:
+        return conditions.soft_match(atom.value, biome_name)
+    if atom.kind == conditions.KIND_BIOMETAG:
+        return normalize_tag(atom.value) in tags_for_biome
+    return False
+
+
 def biome_case_via_tag(entry: Entry, biome_name: str) -> Optional[str]:
-    """Return the BIOMETAG value that makes entry a case of biome_name."""
-    if any((not b.is_tag) and b.value == biome_name for b in entry.biomes):
+    """Return the BIOMETAG value that makes entry a case of biome_name, or
+    None when a BIOME= condition matches it directly."""
+    atoms = condition_logic.entry_atoms(entry)
+    if any(a.kind == conditions.KIND_BIOME
+           and conditions.soft_match(a.value, biome_name) for a in atoms):
         return None
     tags_for_biome = biome_tags(biome_name)
-    for condition in entry.biomes:
-        if condition.is_tag and normalize_tag(condition.value) in tags_for_biome:
-            return condition.value
+    for atom in atoms:
+        if (atom.kind == conditions.KIND_BIOMETAG
+                and normalize_tag(atom.value) in tags_for_biome):
+            return atom.value
     return None
+
+
+def biome_case_via_soft(entry: Entry, biome_name: str) -> Optional[str]:
+    """The BIOME= value that covers ``biome_name`` only by soft matching
+    (e.g. ``forest`` for dark_forest), or None when the entry names the biome
+    exactly (or is not a biome case at all).
+    """
+    softs = [a.value for a in condition_logic.entry_atoms(entry)
+             if a.kind == conditions.KIND_BIOME
+             and conditions.soft_match(a.value, biome_name)]
+    if not softs:
+        return None
+    exact = conditions.full_id(biome_name)
+    if any(conditions.full_id(v) == exact for v in softs):
+        return None
+    return softs[0]
 
 
 def add_biome_case(pack: Songpack, biome_name: str,

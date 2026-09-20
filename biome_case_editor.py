@@ -409,6 +409,10 @@ class BiomeCaseEditorWindow(ctk.CTkToplevel):
             via_tag = case_grouping.biome_case_via_tag(entry, self.biome_name)
             if via_tag:
                 self._build_biome_tag_case_banner(via_tag)
+            else:
+                soft = case_grouping.biome_case_via_soft(entry, self.biome_name)
+                if soft:
+                    self._build_soft_biome_banner(soft)
 
         if entry is None:
             _wrapping_label(
@@ -423,11 +427,12 @@ class BiomeCaseEditorWindow(ctk.CTkToplevel):
         for cat in C.FIXED_CATEGORY_ORDER:
             self._build_category(entry, cat)
 
-        if (entry.biomes and len(entry.biomes) > 1) or entry.dimensions or entry.blocks:
+        if ((entry.biomes and len(entry.biomes) > 1) or entry.dimensions
+                or entry.blocks or entry.custom_raw_conditions):
             _wrapping_label(
                 self.body,
                 (f"{chr(0x26A0)} This case also has biome/dimension/nearby-block "
-                 f"conditions beyond this {self._noun()}, set from Music & Conditions. "
+                 f"or custom conditions beyond this {self._noun()}, set from Music & Conditions. "
                  "They stay as-is; use \"Open full editor\" below to change them."),
                 font=_SMALL, text_color=("#b45309", "#E0A030"))
 
@@ -467,6 +472,17 @@ class BiomeCaseEditorWindow(ctk.CTkToplevel):
             "Its songs and conditions apply to every biome contained by that "
             "tag, not only this biome. Edit/remove the original tag condition "
             "in the full editor if you want to change that scope.",
+            font=_SMALL, text_color=("gray40", "gray70"),
+        )
+
+    def _build_soft_biome_banner(self, value: str) -> None:
+        """This case names a broader BIOME= value (BIOME=forest) that also
+        matches this biome, exactly as the mod's soft search does."""
+        _wrapping_label(
+            self.body,
+            f"This case is matched by BIOME={value}, which soft-matches every "
+            f"biome whose name contains \"{value}\", not only "
+            f"{self.biome_name}. Its songs and conditions apply to all of them.",
             font=_SMALL, text_color=("gray40", "gray70"),
         )
 
@@ -661,7 +677,8 @@ class BiomeCaseEditorWindow(ctk.CTkToplevel):
 for _name in (
     "_cases", "_noun", "_current_entry", "_refresh_case_bar", "_restyle_case_tabs",
     "_select_case", "_add_case", "_remove_case", "_build_editor",
-    "_build_tag_banner", "_build_biome_tag_case_banner", "_build_category",
+    "_build_tag_banner", "_build_biome_tag_case_banner",
+    "_build_soft_biome_banner", "_build_category",
     "_on_category_changed", "_set_combine",
     "_build_songs_section", "_build_fallback_row", "_on_fallback_changed",
     "_add_song", "_remove_song", "_open_full_editor",
