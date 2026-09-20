@@ -39,7 +39,7 @@ from typing import Dict, List, Optional
 
 import constants as C
 from models import BiomeCondition, Entry, Songpack
-from simulation import normalize_tag
+from simulation import biome_tags, normalize_tag
 
 
 # ---------------------------------------------------------------------------
@@ -124,10 +124,29 @@ def biome_cases(pack: Songpack, biome_name: str,
             e for e in pack.entries
             if any(b.is_tag and normalize_tag(b.value) == key for b in e.biomes)
         ]
+
+    # A BIOMETAG condition is also a valid case of every biome contained by
+    # that tag. This is a derived view; the Entry itself is never expanded.
+    tags_for_biome = biome_tags(biome_name)
     return [
         e for e in pack.entries
-        if any((not b.is_tag) and b.value == biome_name for b in e.biomes)
+        if any(
+            ((not b.is_tag) and b.value == biome_name)
+            or (b.is_tag and normalize_tag(b.value) in tags_for_biome)
+            for b in e.biomes
+        )
     ]
+
+
+def biome_case_via_tag(entry: Entry, biome_name: str) -> Optional[str]:
+    """Return the BIOMETAG value that makes entry a case of biome_name."""
+    if any((not b.is_tag) and b.value == biome_name for b in entry.biomes):
+        return None
+    tags_for_biome = biome_tags(biome_name)
+    for condition in entry.biomes:
+        if condition.is_tag and normalize_tag(condition.value) in tags_for_biome:
+            return condition.value
+    return None
 
 
 def add_biome_case(pack: Songpack, biome_name: str,
