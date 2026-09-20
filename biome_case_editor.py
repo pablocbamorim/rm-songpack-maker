@@ -320,8 +320,13 @@ class BiomeCaseEditorWindow(ctk.CTkToplevel):
         cases = self._cases()
         for index, button in enumerate(self._case_tab_buttons):
             text = f"Case {index + 1}"
-            if index < len(cases) and not cases[index].songs:
-                text += "  (no songs)"
+            if index < len(cases):
+                via_tag = case_grouping.biome_case_via_tag(
+                    cases[index], self.biome_name)
+                if via_tag:
+                    text += f"  [{via_tag}]"
+                if not cases[index].songs:
+                    text += "  (no songs)"
             fg, hover, tc = _TAB_ON if index == self.active_case else _TAB_OFF
             try:
                 button.configure(text=text, fg_color=fg, hover_color=hover,
@@ -353,8 +358,17 @@ class BiomeCaseEditorWindow(ctk.CTkToplevel):
         index = max(0, min(self.active_case, len(cases) - 1))
         victim = cases[index]
         detail = ""
+        via_tag = case_grouping.biome_case_via_tag(victim, self.biome_name)
+        if via_tag:
+            members = biome_customization.tag_members(via_tag)
+            scope = (
+                f"\n\nThis case comes from BIOMETAG={via_tag}. Removing it removes "
+                f"the entry from every biome covered by that tag"
+                f"{f' ({len(members)} biomes)' if members else ''}."
+            )
+            detail += scope
         if victim.songs:
-            detail = f"\n\nIts songs ({', '.join(victim.songs)}) go with it."
+            detail += f"\n\nIts songs ({', '.join(victim.songs)}) go with it."
         if not messagebox.askyesno(
                 "Remove case",
                 f"Remove Case {index + 1} for {self._noun()} '{self.biome_name}'?{detail}",
@@ -378,6 +392,11 @@ class BiomeCaseEditorWindow(ctk.CTkToplevel):
             self._build_tag_banner()
 
         entry = self._current_entry()
+        if entry is not None and not self.is_tag:
+            via_tag = case_grouping.biome_case_via_tag(entry, self.biome_name)
+            if via_tag:
+                self._build_biome_tag_case_banner(via_tag)
+
         if entry is None:
             _wrapping_label(
                 self.body,
@@ -420,6 +439,23 @@ class BiomeCaseEditorWindow(ctk.CTkToplevel):
         ).pack(side="left", padx=(8, 0))
 
         self._update_score_label(entry)
+
+    def _build_biome_tag_case_banner(self, tag_value: str) -> None:
+        """Explain that this biome case is inherited from a BIOMETAG entry.
+
+        The editor does not copy the tag condition onto the biome or alter
+        the YAML; it only exposes the tag-derived match in this biome's view.
+        """
+        members = biome_customization.tag_members(tag_value)
+        suffix = f" ({len(members)} biomes)" if members else ""
+        _wrapping_label(
+            self.body,
+            f"This case is provided by BIOMETAG={tag_value}{suffix}. "
+            "Its songs and conditions apply to every biome contained by that "
+            "tag, not only this biome. Edit/remove the original tag condition "
+            "in the full editor if you want to change that scope.",
+            font=_SMALL, text_color=("gray40", "gray70"),
+        )
 
     def _build_tag_banner(self) -> None:
         """Tag view only. Says which biomes the tag covers -- so it is clear
