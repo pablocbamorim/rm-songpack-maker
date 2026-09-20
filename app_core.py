@@ -2544,6 +2544,10 @@ class App(ctk.CTk):
         self.settings_tab = settings_tab.SettingsTab(
             self.notebook.add("Settings"), self)
 
+        # The simulation workspace is the primary interactive view, so land
+        # there for both a fresh session and a restored songpack.
+        self.notebook.set("Simulation Map")
+
         # Status bar uses the small variant so it doesn't dominate the
         # layout now that the body font is larger.
         status_bar = ctk.CTkLabel(
