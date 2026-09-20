@@ -115,8 +115,8 @@ class BiomeCaseEditorPanel(ctk.CTkFrame):
     window only after a right-click.
     """
 
-    def __init__(self, app, biome_name: str):
-        super().__init__(app, corner_radius=10)
+    def __init__(self, parent, app, biome_name: str):
+        super().__init__(parent, corner_radius=10)
         self.app = app
         self.biome_name = biome_name
         self.active_case = 0
