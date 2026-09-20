@@ -395,6 +395,11 @@ class SimulatorTab(ctk.CTkFrame):
                 relx=0.5, rely=0.5, anchor="center",
                 width=side, height=side,
             )
+            # ``place`` can size the frame before the nested canvas receives
+            # its Configure event on some Tk/CustomTkinter versions. Force a
+            # redraw once the new geometry has settled so the map cannot stay
+            # visually blank.
+            chart.after_idle(chart.redraw)
         except tk.TclError:
             pass
     def _show_editor_for(self, biome: Optional[str]) -> None:
