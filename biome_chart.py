@@ -110,8 +110,8 @@ _MIN_HEIGHT = 160
 BACKDROP_CORNERS = {
     (0, 0): "#565d5e",
     (0, 1): "#3c4f52",
-    (1, 0): "#52433c",
-    (1, 1): "#4f4633",
+    (1, 0): "#4f4633",
+    (1, 1): "#52433c",
 }
 #: Grid lines on top of the gradient (the theme's own grid colour is tuned
 #: for the flat plot colour and would be too harsh/dark here).
