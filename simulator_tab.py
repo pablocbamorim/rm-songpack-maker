@@ -178,6 +178,7 @@ class SimulatorTab(ctk.CTkFrame):
         self._tick_job = None
         self._manual_job = None
         self._wave_step = 0
+        self._selected_case_id: Optional[str] = None
 
         self._more_open = False
         self._extra_vars: Dict[str, tk.BooleanVar] = {}
@@ -377,6 +378,8 @@ class SimulatorTab(ctk.CTkFrame):
             self.tree.column(key, width=width, anchor=anchor, stretch=stretch)
         self.tree.tag_configure("dim", foreground="gray50")
         self.tree.tag_configure("playing", foreground="#4E9BD6")
+        self.tree.tag_configure("selected_case", foreground="#B56A00")
+        self.tree.tag_configure("playing_selected", foreground="#B56A00")
         scroll = ttk.Scrollbar(tree_wrap, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scroll.set)
         scroll.pack(side="right", fill="y")
@@ -444,7 +447,8 @@ class SimulatorTab(ctk.CTkFrame):
         _kind, name = self._describe(biome)
         self.editor_panel = biome_case_editor.BiomeCaseEditorPanel(
             self.editor_wrap, self.app, name,
-            is_tag=self._is_tag_subject(biome))
+            is_tag=self._is_tag_subject(biome),
+            on_case_selected=self._on_case_selected)
         self.editor_panel.pack(fill="both", expand=True)
 
     # ------------------------------------------------------------------
@@ -520,6 +524,7 @@ class SimulatorTab(ctk.CTkFrame):
         self._map_mode = mode
         self._pinned = None
         self._preview = None
+        self._selected_case_id = None
         self.map_title_label.configure(text=self._map_title())
         self.editor_placeholder.configure(text=self._placeholder_text())
         self._show_editor_for(None)
@@ -718,6 +723,7 @@ class SimulatorTab(ctk.CTkFrame):
             self._pinned = subject
             if self._playlist_active:
                 self._play_biome = subject
+        self._selected_case_id = None
         self._show_editor_for(self._pinned)
         self._context_changed()
 
@@ -798,8 +804,18 @@ class SimulatorTab(ctk.CTkFrame):
                 notes.append("no file")
             if item.also_in:
                 notes.append("also " + ",".join(f"#{n}" for n in item.also_in))
-            tags = ("playing",) if playing else (
-                ("dim",) if not item.reachable else ())
+            selected = (
+                self._selected_case_id is not None
+                and item.entry_id == self._selected_case_id
+            )
+            if playing and selected:
+                tags = ("playing_selected",)
+            elif selected:
+                tags = ("selected_case",)
+            elif playing:
+                tags = ("playing",)
+            else:
+                tags = (("dim",) if not item.reachable else ())
             tree.insert("", "end", iid=str(i), tags=tags, values=(
                 wave, item.song, f"#{item.entry_index}", " · ".join(notes)))
 
@@ -814,6 +830,20 @@ class SimulatorTab(ctk.CTkFrame):
                 parts.append(
                     "Dimmed = unreachable: an entry above has no allowFallback, "
                     "so it repeats instead of falling through.")
+        if self._selected_case_id:
+            selected = next(
+                (it for it in plan.items if it.entry_id == self._selected_case_id),
+                None,
+            )
+            if selected is None:
+                parts.append("Selected case is not part of this situation's plan.")
+            elif selected.reachable:
+                parts.append("★ Selected case is reachable under the current conditions.")
+            else:
+                parts.append(
+                    "★ Selected case matches, but is unreachable because an entry "
+                    "above it does not allow fallback."
+                )
         if self._is_tag_subject(biome):
             parts.append(
                 "Tag view: entries that need one specific BIOME= are not listed.")
@@ -826,6 +856,13 @@ class SimulatorTab(ctk.CTkFrame):
                 + "; ".join(notes)[:110]
                 + ". List them under More conditions to test them.")
         self.legend_label.configure(text="  ".join(parts))
+
+    def _on_case_selected(self, entry_id: str) -> None:
+        """Highlight the selected case in column 2 without changing the
+        simulated conditions behind the user's back.
+        """
+        self._selected_case_id = entry_id
+        self._refresh_panel()
 
     # ------------------------------------------------------------------
     # context changes (conditions or biome moved)
