@@ -45,6 +45,7 @@ This is especially useful when a songpack grows beyond a few entries. Instead of
 </p>
 
 - **Biome Simulator** tab: choose a situation (time of day, weather, world height, underwater, plus any other condition), hover or click a biome on the map and see which songs ReactiveMusic would play there, in priority order. Double-click a song to start a playlist that imitates the mod.
+- **Global and default songs**: mark a song's case as *Global* (plays in every biome where its conditions hold) or *Default* (fills gaps where no biome-specific entry handles the situation). No per-biome copies are generated; the entry is written with no `BIOME=` and pinned below all normal entries, and **Check global songs…** on the Priority Order tab finds entries that block a global song and can turn `allowFallback` on for them.
 - Choose a target Minecraft / ReactiveMusic build so unsupported conditions are identified before saving.
 - Keep unsupported or custom conditions instead of losing them when editing a songpack.
 
@@ -181,7 +182,7 @@ Your Songpack/
 └── songpack_target.json
 ```
 
-The second and third files are editor metadata: custom biome/biome-tag display colors, and the target Minecraft/mod version. ReactiveMusic itself does not read either of them.
+The second and third files are editor metadata: custom biome/biome-tag display colors, and the target Minecraft/mod version. A fourth, `songpack_scopes.json`, appears only when some entry is marked Global or Default. ReactiveMusic itself does not read any of them.
 
 Create a `music` subfolder and place all referenced audio files there:
 
@@ -204,6 +205,7 @@ Open **Biome Simulator** to test a songpack without launching Minecraft.
 - The sliders at the top pick exactly one option each for **time of day**, **weather** and **world height**, and a switch toggles **underwater**. **More conditions** (hidden by default) holds the remaining events (`HOME`, `BOSS`, `VILLAGE`, ...) and a manual box for facts the simulator cannot infer, such as `DIM=NETHER`, `BLOCK=nether_bricks,1000` or `BIOMETAG=IS_WET`.
 - Hover a biome on the map to see its songs in priority order; click it to pin the list. Double-click a song to start a playlist (needs the music folder loaded); the playing song gets a sound-wave marker.
 - The rules follow `MAKING_SONGPACKS.md`: the first valid entry wins, `allowFallback` decides whether the next valid entry is used once an entry's songs are exhausted (otherwise it loops and entries below it are shown dimmed as unreachable), and `forceStop*` flags cut the current song when the situation changes.
+- **Biome tags map:** the selector above the map switches between the Biomes map and a Biome tags map in the same style. Each tag is drawn at the average temperature/humidity of the biomes it contains (its colour is the average of theirs), and selecting one edits its `BIOMETAG=` cases. Songs added to a tag play in every biome the tag contains, and show up for those biomes on the Biomes map.
 - Simplifications: songs play in list order (the mod may pick randomly), `musicDelayLength` silences are ignored, and the biome -> `BIOMETAG` table is built in and approximate. Entries that depend on facts the simulator cannot know are reported instead of silently hidden.
 
 ## Installing the finished songpack in Minecraft

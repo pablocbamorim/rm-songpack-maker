@@ -1,6 +1,7 @@
 PyYAML
 pygame
 customtkinter
+Pillow
 
 # Audio editor (waveform + trim + export). soundfile is a thin binding to
 # libsndfile; its PyPI wheels bundle libsndfile >= 1.1, which includes the

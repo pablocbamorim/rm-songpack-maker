@@ -17,6 +17,16 @@ another biome is like "teleporting" there: the current song keeps playing,
 unless a forceStop* flag says otherwise, and the next song comes from the
 new situation.
 
+A selector above the map switches between two maps of the same style: the
+Biomes map (one icon per biome) and the Biome tags map (one icon per tag,
+placed at the average temperature/humidity of the biomes it contains, see
+biome_customization.tag_attributes). Everything below the map -- list,
+playlist, embedded editor -- works on a "subject": a biome name, or "#" + a
+tag name. On the tags map the list shows what would play "somewhere inside a
+biome of that tag" (simulation.make_tag_state) and the editor edits BIOMETAG=
+cases; since the simulator resolves tags through the same membership table,
+songs added to a tag also show up on each biome the tag contains.
+
 All the mod logic lives in simulation.py; this module is view + playback.
 Playback goes through audio_preview.get_player(), the same shared player the
 song list and the audio editor use.
@@ -54,6 +64,10 @@ _HEIGHT_OPTIONS = [("DEEP_UNDERGROUND", "DEEP UNDRG"), ("UNDERGROUND", "UNDERG")
 
 # Categories already covered by the sliders / switch at the top.
 _SLIDER_CATEGORIES = (C.CATEGORY_TIME, C.CATEGORY_WEATHER, C.CATEGORY_HEIGHT)
+
+#: Marks a subject as a biome tag ("#IS_HOT"), as opposed to a biome ("desert").
+#: Never occurs at the start of a biome id, so the two can share one cache/state.
+_TAG_PREFIX = "#"
 
 _MANUAL_HINT = (
     "Facts that are true in this situation, one per line. Examples:\n"
@@ -138,16 +152,21 @@ class SimulatorTab(ctk.CTkFrame):
                       "End": "minecraft:the_end"}
     _WAVE_FRAMES = ("(♪)", "((♪))", "(((♪)))")
     _POLL_MS = 300
+    _MODE_BIOMES = "Biomes"
+    _MODE_TAGS = "Biome tags"
 
     def __init__(self, parent, app: "App"):  # noqa: F821
         super().__init__(parent, fg_color="transparent")
         self.app = app
         self.player = audio_preview.get_player()
 
-        # Which biome the list shows.
+        # Which map is showing: "biomes" or "tags".
+        self._map_mode = "biomes"
+
+        # Which subject (biome, or "#tag") the list shows.
         self._pinned: Optional[str] = None      # clicked
         self._preview: Optional[str] = None     # last hovered (sticky)
-        self._play_biome: Optional[str] = None  # biome the playlist follows
+        self._play_biome: Optional[str] = None  # subject the playlist follows
 
         # Playlist state.
         self._playlist_active = False
@@ -268,13 +287,19 @@ class SimulatorTab(ctk.CTkFrame):
         chart_wrap = ctk.CTkFrame(body, corner_radius=10)
         chart_wrap.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
 
+        # Switch between the biome map and the biome-tag map.
+        self.map_mode_var = tk.StringVar(value=self._MODE_BIOMES)
+        ctk.CTkSegmentedButton(
+            chart_wrap, values=[self._MODE_BIOMES, self._MODE_TAGS],
+            variable=self.map_mode_var, font=_BODY,
+            command=self._on_map_mode_changed,
+        ).pack(fill="x", padx=10, pady=(8, 0))
+
         bar = ctk.CTkFrame(chart_wrap, fg_color="transparent")
-        bar.pack(fill="x", padx=10, pady=(8, 0))
-        ctk.CTkLabel(
-            bar,
-            text="Biome map — click to select",
-            font=_BODY_BOLD,
-        ).pack(side="left")
+        bar.pack(fill="x", padx=10, pady=(6, 0))
+        self.map_title_label = ctk.CTkLabel(
+            bar, text=self._map_title(), font=_BODY_BOLD)
+        self.map_title_label.pack(side="left")
         self.chart_dimension_var = tk.StringVar(value="All")
         ctk.CTkSegmentedButton(
             bar, values=self._DIMENSIONS, variable=self.chart_dimension_var,
@@ -288,13 +313,14 @@ class SimulatorTab(ctk.CTkFrame):
         self.chart = biome_chart.BiomeChart(
             map_host,
             biomes=self._chart_biomes,
-            color_of=lambda name: self.app.library_tab._biome_color(name, False),
+            color_of=self._chart_color,
             active=self._active_keys,
             on_toggle=self._on_chart_click,
             on_hover=self._on_chart_hover,
             tooltip_lines=self._tooltip_lines,
             action_labels=("click to select", "click to deselect"),
             on_right_click=self._on_chart_right_click,
+            backdrop=self._chart_backdrop,
             dark=bool(self.app.settings.get("dark_theme", True)),
             height=460,
         )
@@ -367,9 +393,7 @@ class SimulatorTab(ctk.CTkFrame):
         self.editor_wrap.grid(row=0, column=2, sticky="nsew", padx=(4, 0))
         self.editor_placeholder = ctk.CTkLabel(
             self.editor_wrap,
-            text="Select a biome on the map to edit its cases.\n\n"
-                 "The editor stays here while you work, so the map and playlist "
-                 "remain visible.",
+            text=self._placeholder_text(),
             font=_BODY, text_color=("gray40", "gray70"),
             justify="center", wraplength=300,
         )
@@ -404,7 +428,9 @@ class SimulatorTab(ctk.CTkFrame):
             pass
 
     def _show_editor_for(self, biome: Optional[str]) -> None:
-        """Show the embedded biome editor only for the selected biome."""
+        """Show the embedded case editor only for the selected subject: a
+        biome, or (on the tags map) a biome tag.
+        """
         if self.editor_panel is not None:
             try:
                 self.editor_panel.destroy()
@@ -415,8 +441,10 @@ class SimulatorTab(ctk.CTkFrame):
             self.editor_placeholder.pack(expand=True, padx=20)
             return
         self.editor_placeholder.pack_forget()
+        _kind, name = self._describe(biome)
         self.editor_panel = biome_case_editor.BiomeCaseEditorPanel(
-            self.editor_wrap, self.app, biome)
+            self.editor_wrap, self.app, name,
+            is_tag=self._is_tag_subject(biome))
         self.editor_panel.pack(fill="both", expand=True)
 
     # ------------------------------------------------------------------
@@ -447,6 +475,57 @@ class SimulatorTab(ctk.CTkFrame):
         self.chart.set_dark(bool(self.app.settings.get("dark_theme", True)))
 
     def on_biome_colors_changed(self) -> None:
+        self._redraw_chart()
+
+    # ------------------------------------------------------------------
+    # map mode + subjects
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _is_tag_subject(subject: Optional[str]) -> bool:
+        return bool(subject) and subject.startswith(_TAG_PREFIX)
+
+    @staticmethod
+    def _describe(subject: str):
+        """('Biome' | 'Biome tag', bare name) for a subject."""
+        if subject.startswith(_TAG_PREFIX):
+            return "Biome tag", subject[len(_TAG_PREFIX):]
+        return "Biome", subject
+
+    def _subject(self, name: str) -> str:
+        """The subject for an icon of the map currently showing."""
+        return _TAG_PREFIX + name if self._map_mode == "tags" else name
+
+    def _map_title(self) -> str:
+        noun = "Biome tag" if self._map_mode == "tags" else "Biome"
+        return f"{noun} map — click to select"
+
+    def _placeholder_text(self) -> str:
+        if self._map_mode == "tags":
+            return ("Select a biome tag on the map to edit its cases.\n\n"
+                    "Songs added to a tag play in every biome it contains, "
+                    "and show up for those biomes on the Biomes map.")
+        return ("Select a biome on the map to edit its cases.\n\n"
+                "The editor stays here while you work, so the map and playlist "
+                "remain visible.")
+
+    def _on_map_mode_changed(self, label: str) -> None:
+        """Swap the map between biomes and biome tags. The pinned / hovered
+        subject belongs to the map it was picked on, so it is dropped; a
+        running playlist is left alone (the list keeps following the playing
+        subject, exactly as when a biome is unpinned).
+        """
+        mode = "tags" if label == self._MODE_TAGS else "biomes"
+        if mode == self._map_mode:
+            return
+        self._map_mode = mode
+        self._pinned = None
+        self._preview = None
+        self.map_title_label.configure(text=self._map_title())
+        self.editor_placeholder.configure(text=self._placeholder_text())
+        self._show_editor_for(None)
+        self._refresh_panel()
+        # Synchronous on purpose: the chart's icons must match the new mode
+        # before the next mouse move asks for a tooltip.
         self._redraw_chart()
 
     # ------------------------------------------------------------------
@@ -506,14 +585,25 @@ class SimulatorTab(ctk.CTkFrame):
         found = biome_customization.load_app_dimensions().get(biome)
         return found or "minecraft:overworld"   # custom biomes: assume overworld
 
-    def _plan_for(self, biome: str) -> simulation.Plan:
-        plan = self._plan_cache.get(biome)
+    def _tag_dimensions(self, tag: str) -> Set[str]:
+        """Every dimension the tag's biomes live in (see make_tag_state)."""
+        members = biome_customization.tag_members(tag)
+        return {self._dimension_of(b) for b in members} or {"minecraft:overworld"}
+
+    def _plan_for(self, subject: str) -> simulation.Plan:
+        """The plan for a subject: a biome name, or "#tag" for a biome tag."""
+        plan = self._plan_cache.get(subject)
         if plan is None:
             flags, manual = self._facts()
-            state = simulation.make_state(
-                biome, self._dimension_of(biome), flags, manual)
+            if self._is_tag_subject(subject):
+                tag = subject[len(_TAG_PREFIX):]
+                state = simulation.make_tag_state(
+                    tag, self._tag_dimensions(tag), flags, manual)
+            else:
+                state = simulation.make_state(
+                    subject, self._dimension_of(subject), flags, manual)
             plan = simulation.build_plan(self.app.pack.entries, state)
-            self._plan_cache[biome] = plan
+            self._plan_cache[subject] = plan
         return plan
 
     def _displayed_biome(self) -> Optional[str]:
@@ -527,18 +617,57 @@ class SimulatorTab(ctk.CTkFrame):
     # chart callbacks
     # ------------------------------------------------------------------
     def _chart_biomes(self) -> dict:
+        """Data source for the chart: biomes, or tags on the tags map. Both
+        are {name: {temperature, humidity, erosion, weirdness}}.
+        """
         attrs = biome_customization.all_attributes(
             self.app.biome_custom_attributes)
+        tags_mode = self._map_mode == "tags"
+        if tags_mode:
+            # Averaged over each tag's biomes, see tag_attributes().
+            attrs = biome_customization.tag_attributes(attrs)
         wanted = self._DIMENSION_IDS.get(self.chart_dimension_var.get())
         if not wanted:
             return attrs
         dimension_of = biome_customization.load_app_dimensions()
+        if tags_mode:
+            # A tag belongs to a dimension when any of its biomes does; its
+            # position is unaffected, so icons don't jump when filtering.
+            return {t: a for t, a in attrs.items()
+                    if any(dimension_of.get(b) == wanted
+                           for b in biome_customization.tag_members(t))}
         return {n: a for n, a in attrs.items() if dimension_of.get(n) == wanted}
 
+    def _chart_backdrop(self) -> dict:
+        """Situation -> map background layers (see biome_chart.render_backdrop).
+        Read from the same flags as the plans, so sliders, the extra
+        checkboxes and the manual box all drive it, and it repaints through
+        the existing _context_changed -> _redraw_chart path.
+        """
+        flags, _manual = self._facts()
+        if "NIGHT" in flags:
+            night = 1.0
+        elif flags & {"SUNRISE", "SUNSET"}:
+            night = 0.5
+        else:
+            night = 0.0
+        weather = next((w for w in ("STORM", "RAIN", "SNOW") if w in flags), None)
+        return {"night": night, "underwater": "UNDERWATER" in flags,
+                "weather": weather}
+
+    def _chart_color(self, name: str) -> str:
+        """Icon colour: the biome's colour, or a tag's (its songpack override,
+        else the average of its biomes' colours -- see LibraryTab._biome_color).
+        """
+        return self.app.library_tab._biome_color(name, self._map_mode == "tags")
+
     def _active_keys(self) -> set:
-        biome = self._pinned or (self._play_biome if self._playlist_active
-                                 else None)
-        return {biome_chart.normalize_name(biome)} if biome else set()
+        subject = self._pinned or (self._play_biome if self._playlist_active
+                                   else None)
+        # A subject picked on the other map has no icon here to highlight.
+        if not subject or self._is_tag_subject(subject) != (self._map_mode == "tags"):
+            return set()
+        return {biome_chart.normalize_name(self._describe(subject)[1])}
 
     def _redraw_chart(self) -> None:
         try:
@@ -548,11 +677,16 @@ class SimulatorTab(ctk.CTkFrame):
             pass
 
     def _tooltip_lines(self, name: str) -> List[str]:
-        reachable = [i for i in self._plan_for(name).items if i.reachable]
+        lines: List[str] = []
+        if self._map_mode == "tags":
+            count = len(biome_customization.tag_members(name))
+            lines.append(f"contains {count} biome{'' if count == 1 else 's'}")
+        reachable = [i for i in self._plan_for(self._subject(name)).items
+                     if i.reachable]
         if not reachable:
-            return ["no song for these conditions"]
-        lines = [f"{n}. {it.song}   (#{it.entry_index})"
-                 for n, it in enumerate(reachable[:6], start=1)]
+            return lines + ["no song for these conditions"]
+        lines += [f"{n}. {it.song}   (#{it.entry_index})"
+                  for n, it in enumerate(reachable[:6], start=1)]
         if len(reachable) > 6:
             lines.append(f"… +{len(reachable) - 6} more")
         return lines
@@ -560,9 +694,10 @@ class SimulatorTab(ctk.CTkFrame):
     def _on_chart_hover(self, name: Optional[str]) -> None:
         if name is None:          # the preview is sticky on purpose
             return
-        if name == self._preview:
+        subject = self._subject(name)
+        if subject == self._preview:
             return
-        self._preview = name
+        self._preview = subject
         if not self._pinned and not self._playlist_active:
             self._refresh_panel()
 
@@ -575,13 +710,14 @@ class SimulatorTab(ctk.CTkFrame):
         self._on_chart_click(name)
 
     def _on_chart_click(self, name: str) -> None:
-        self._preview = name
-        if self._pinned == name:
+        subject = self._subject(name)
+        self._preview = subject
+        if self._pinned == subject:
             self._pinned = None
         else:
-            self._pinned = name
+            self._pinned = subject
             if self._playlist_active:
-                self._play_biome = name
+                self._play_biome = subject
         self._show_editor_for(self._pinned)
         self._context_changed()
 
@@ -624,20 +760,22 @@ class SimulatorTab(ctk.CTkFrame):
 
         biome = self._displayed_biome()
         if biome is None:
-            self.title_label.configure(text="Biome: —")
+            noun = "biome tag" if self._map_mode == "tags" else "biome"
+            self.title_label.configure(text=f"{noun.capitalize()}: —")
             self.mode_label.configure(
-                text="Hover a biome on the map to preview the songs that would "
+                text=f"Hover a {noun} on the map to preview the songs that would "
                      "play there; click it to pin the list.")
             self.legend_label.configure(text="")
             return
 
-        self.title_label.configure(text=f"Biome: {biome}")
+        kind, label = self._describe(biome)
+        self.title_label.configure(text=f"{kind}: {label}")
         if self._pinned:
-            mode = "Pinned — click the biome again to unpin."
+            mode = "Pinned — click it again to unpin."
         elif self._playlist_active:
-            mode = "Following the playing biome — click another biome to move there."
+            mode = "Following the playing list — click another icon to move there."
         else:
-            mode = "Preview — click a biome to pin it; hovering others changes this list."
+            mode = "Preview — click an icon to pin it; hovering others changes this list."
         self.mode_label.configure(text=mode)
 
         plan = self._plan_for(biome)
@@ -648,6 +786,8 @@ class SimulatorTab(ctk.CTkFrame):
                 wave = "⏸" if self.player.is_paused() else \
                     self._WAVE_FRAMES[self._wave_step % len(self._WAVE_FRAMES)]
             notes = []
+            if item.scope != "normal":
+                notes.append(item.scope)
             if not item.reachable:
                 notes.append("unreachable")
             elif item.allow_fallback:
@@ -674,6 +814,9 @@ class SimulatorTab(ctk.CTkFrame):
                 parts.append(
                     "Dimmed = unreachable: an entry above has no allowFallback, "
                     "so it repeats instead of falling through.")
+        if self._is_tag_subject(biome):
+            parts.append(
+                "Tag view: entries that need one specific BIOME= are not listed.")
         if plan.pending:
             notes = sorted({n for _idx, ns in plan.pending for n in ns})
             parts.append(

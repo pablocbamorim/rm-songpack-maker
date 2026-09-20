@@ -59,14 +59,19 @@ def normalize_tag(name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Built-in biome -> tag table
+# Biome -> tag table
 #
-# APPROXIMATE. Modelled on Fabric's conventional biome tags for the vanilla
-# biomes listed in constants.COMMON_BIOMES; it is a convenience, not gospel.
-# Tags that are missing here (e.g. IS_WET, IS_VEGETATION_*) simply never match
-# automatically, and the UI flags entries that depend on them. Anything can
-# be forced from the simulator's manual box with "BIOMETAG=IS_WET".
-# Keys are normalized (no IS_ prefix).
+# The authoritative source is the "biome_tags" block of the bundled
+# default_biome_colors.json (tag -> the biomes it contains), which is also
+# what the Biome Tag map is drawn from -- so a song added to a tag on that map
+# plays in exactly the biomes the map says the tag contains. See _tag_table().
+#
+# TAG_MEMBERS below is the FALLBACK for a missing / old-format JSON and for any
+# tag the JSON doesn't list. It is APPROXIMATE, modelled on Fabric's
+# conventional biome tags for the vanilla biomes in constants.COMMON_BIOMES.
+# Tags found in neither simply never match automatically, and the UI flags
+# entries that depend on them. Anything can be forced from the simulator's
+# manual box with "BIOMETAG=IS_WET". Keys are normalized (no IS_ prefix).
 # ---------------------------------------------------------------------------
 _NETHER = {"nether_wastes", "soul_sand_valley", "crimson_forest",
            "warped_forest", "basalt_deltas"}
@@ -144,12 +149,48 @@ TAG_MEMBERS: Dict[str, Set[str]] = {
     "NO_DEFAULT_MONSTERS": {"mushroom_fields"},
 }
 
-KNOWN_TAGS = frozenset(TAG_MEMBERS)
+_TABLE_CACHE: Optional[Dict[str, Set[str]]] = None
+
+
+def _tag_table() -> Dict[str, Set[str]]:
+    """{normalized tag: {normalized biome, ...}}: the bundled JSON's tag lists
+    layered over the built-in fallback (the JSON wins for any tag it lists).
+    Built once; imported lazily so this module stays cheap to import in tests.
+    """
+    global _TABLE_CACHE
+    if _TABLE_CACHE is None:
+        table = {tag: set(members) for tag, members in TAG_MEMBERS.items()}
+        try:
+            import biome_customization
+            for tag, biomes in biome_customization.load_app_tag_members().items():
+                table[normalize_tag(tag)] = {normalize_biome(b) for b in biomes}
+        except Exception:  # noqa: BLE001 - a broken data file must not stop the simulator
+            pass
+        _TABLE_CACHE = table
+    return _TABLE_CACHE
+
+
+def known_tags() -> frozenset:
+    """Normalized names of every tag the simulator can evaluate."""
+    return frozenset(_tag_table())
 
 
 def biome_tags(name: str) -> Set[str]:
     key = normalize_biome(name)
-    return {tag for tag, members in TAG_MEMBERS.items() if key in members}
+    return {tag for tag, members in _tag_table().items() if key in members}
+
+
+def tag_supertags(tag: str) -> Set[str]:
+    """`tag` plus every tag that contains all of its biomes. A biome known
+    only to be "in tag T" is necessarily in each of these too (e.g. anything
+    in IS_HOT_NETHER is also IS_NETHER), so they are all certainly true.
+    """
+    table = _tag_table()
+    key = normalize_tag(tag)
+    members = table.get(key)
+    if not members:
+        return {key}
+    return {t for t, m in table.items() if members <= m}
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +267,31 @@ def make_state(biome: str, dimension: Optional[str], flags: Set[str],
     )
 
 
+def make_tag_state(tag: str, dimensions: Set[str], flags: Set[str],
+                   manual: Optional[ManualFacts] = None) -> SimState:
+    """The situation "somewhere inside a biome of tag `tag`", for the Biome
+    Tag map, where no single biome is picked.
+
+    The biome name is unknown, so BIOME= conditions can't match (entries
+    that need one are simply not part of a tag's list). What IS certain: the
+    tag itself and the tags that contain all of its biomes, and the
+    dimension(s) those biomes live in. A tag spanning several dimensions is
+    treated as "in any of them", so a DIM= entry is kept when at least one
+    of the tag's biomes satisfies it.
+    """
+    manual = manual or ManualFacts()
+    dims = {d.lower() for d in dimensions}
+    return SimState(
+        biome="",
+        dimension=next(iter(dims)) if len(dims) == 1 else "",
+        flags=set(flags) | manual.flags,
+        tags=tag_supertags(tag) | manual.tags,
+        dims=dims | manual.dims,
+        blocks=dict(manual.blocks),
+        raw=set(manual.raw),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Condition evaluation
 # ---------------------------------------------------------------------------
@@ -246,7 +312,7 @@ def eval_atom(token: str, st: SimState) -> Tuple[bool, Optional[str]]:
         tag = normalize_tag(raw_tag)
         if tag in st.tags:
             return True, None
-        return False, (None if tag in KNOWN_TAGS
+        return False, (None if tag in known_tags()
                        else f"BIOMETAG={raw_tag.strip()} (tag not in the built-in table)")
 
     if up.startswith(C.PREFIX_BIOME):
@@ -307,6 +373,7 @@ class PlanItem:
     allow_fallback: bool
     reachable: bool           # False: an entry above never falls through
     also_in: List[int] = field(default_factory=list)
+    scope: str = "normal"     # "global" / "default" entries: see scopes.py
 
 
 @dataclass
@@ -369,7 +436,8 @@ def build_plan(entries: List[Entry], st: SimState) -> Plan:
                 continue
             item = PlanItem(song=song, entry_id=entry.id, entry_index=index,
                             allow_fallback=entry.allow_fallback,
-                            reachable=chain)
+                            reachable=chain,
+                            scope=getattr(entry, "scope", "normal"))
             plan.items.append(item)
             seen[song] = item
         if chain and entry.songs and not entry.allow_fallback:

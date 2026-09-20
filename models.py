@@ -87,6 +87,10 @@ class Entry:
     force_start_on_valid: bool = False
     force_chance: float = C.DEFAULT_FORCE_CHANCE
 
+    # Editor-only marker: "normal", "global" or "default" (see constants.py
+    # and scopes.py). Persisted in songpack_scopes.json, not in the YAML.
+    scope: str = C.SCOPE_NORMAL
+
     def display_name(self) -> str:
         if not self.songs:
             return "(no song assigned)"

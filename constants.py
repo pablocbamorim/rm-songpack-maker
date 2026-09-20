@@ -162,6 +162,29 @@ COMBINE_AND = "AND"
 COMBINE_OR = "OR"
 
 # ---------------------------------------------------------------------------
+# Entry scope (editor-only; never written into ReactiveMusic.yaml itself, see
+# scopes.py). A "global" or "default" entry has no BIOME= condition and is
+# pinned BELOW every normal entry, so it is only reached in situations where
+# no biome-specific entry wins -- or where the winning entries have
+# allowFallback on and run out of songs.
+#
+#   normal  an ordinary entry
+#   global  should play everywhere its conditions hold; the editor checks
+#           that no entry above it blocks it (scopes.find_blockers)
+#   default a gap filler: plays only where nothing above it handles the
+#           situation. No blocker check, being blocked is the point.
+# ---------------------------------------------------------------------------
+SCOPE_NORMAL = "normal"
+SCOPE_GLOBAL = "global"
+SCOPE_DEFAULT = "default"
+SCOPES = (SCOPE_NORMAL, SCOPE_GLOBAL, SCOPE_DEFAULT)
+#: Lower rank = higher in the priority list.
+SCOPE_RANK = {SCOPE_NORMAL: 0, SCOPE_GLOBAL: 1, SCOPE_DEFAULT: 2}
+SCOPE_LABELS = {SCOPE_NORMAL: "Normal", SCOPE_GLOBAL: "Global",
+                SCOPE_DEFAULT: "Default"}
+SCOPE_BY_LABEL = {v: k for k, v in SCOPE_LABELS.items()}
+
+# ---------------------------------------------------------------------------
 # Rarity / priority weights.
 #
 # The core idea (see priority.py for the full algorithm): every checked

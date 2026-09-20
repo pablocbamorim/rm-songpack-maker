@@ -14,6 +14,13 @@ the pool of songs that play under it -- closer to how
 MAKING_SONGPACKS.md and the template songpack actually read, entry by
 entry, event set to song list.
 
+The same editor also works *tag-first* (``is_tag=True``, used by the Biome
+Simulator's "Biome tags" map): its cases are the entries carrying a
+``BIOMETAG=`` condition for the selected tag. Songs added there are not
+copied onto each biome the tag contains -- the entry simply matches all of
+them, which is what BIOMETAG means in ReactiveMusic and what the simulator
+shows on the biome map (simulation.biome_tags reads the same membership).
+
 Both views work because a "case" is never stored anywhere of its own --
 see case_grouping.py. It's always just a live grouping over
 ``app.pack.entries``, by primary song here vs. by biome there. Add a case
@@ -37,9 +44,11 @@ from typing import Optional
 
 import customtkinter as ctk
 
+import biome_customization
 import case_grouping
 import condition_logic
 import constants as C
+import mod_versions
 import priority
 import yaml_io
 from models import Entry
@@ -60,6 +69,35 @@ _TAB_OFF = (("#D5D9DE", "#3A3A3A"), ("#C4C8CE", "#4A4A4A"),
 _OPEN: dict = {}
 
 
+
+
+def _wrapping_label(parent, text: str, **label_kwargs) -> ctk.CTkLabel:
+    """A CTkLabel whose wraplength follows the width it is given.
+
+    The embedded panel lives in a column whose width depends on the window,
+    so a fixed wraplength either clips (too wide) or wastes space (too
+    narrow). The holder frame's <Configure> is used to size the text, as
+    _flow_group does in app_core; wraplength is only touched when the width
+    actually changed so the resulting relayout can't feed back into itself.
+    """
+    holder = ctk.CTkFrame(parent, fg_color="transparent")
+    holder.pack(fill="x")
+    label = ctk.CTkLabel(holder, text=text, anchor="w", justify="left",
+                         wraplength=260, **label_kwargs)
+    label.pack(anchor="w", padx=10, pady=(2, 4))
+    last = [260]
+
+    def _fit(_event=None) -> None:
+        width = max(120, int(holder.winfo_width()) - 24)
+        if width != last[0]:
+            last[0] = width
+            try:
+                label.configure(wraplength=width)
+            except tk.TclError:
+                pass
+
+    holder.bind("<Configure>", _fit, add="+")
+    return label
 
 
 def open_biome_case_editor(app, biome_name: str) -> None:
@@ -102,10 +140,14 @@ class BiomeCaseEditorPanel(ctk.CTkFrame):
     window only after a right-click.
     """
 
-    def __init__(self, parent, app, biome_name: str):
+    #: True when ``biome_name`` is a biome *tag* (cases are BIOMETAG= entries).
+    is_tag = False
+
+    def __init__(self, parent, app, biome_name: str, is_tag: bool = False):
         super().__init__(parent, corner_radius=10)
         self.app = app
         self.biome_name = biome_name
+        self.is_tag = is_tag
         self.active_case = 0
         self._case_tab_buttons = []
         self._category_vars = {}
@@ -118,7 +160,10 @@ class BiomeCaseEditorPanel(ctk.CTkFrame):
         outer.pack(fill="both", expand=True, padx=8, pady=8)
 
         ctk.CTkLabel(
-            outer, text=f"Edit: {self.biome_name}", font=_TITLE, anchor="w",
+            outer,
+            text=(f"Edit tag: {self.biome_name}" if self.is_tag
+                  else f"Edit: {self.biome_name}"),
+            font=_TITLE, anchor="w",
         ).pack(fill="x", padx=4, pady=(2, 6))
 
         bar = ctk.CTkFrame(outer, corner_radius=8)
@@ -153,6 +198,11 @@ class BiomeCaseEditorPanel(ctk.CTkFrame):
 
 
 class BiomeCaseEditorWindow(ctk.CTkToplevel):
+    #: The standalone window only ever edits plain biomes; the tag view is the
+    #: embedded panel. Kept as an attribute because the shared methods below
+    #: (copied onto the panel at the bottom of this file) read ``self.is_tag``.
+    is_tag = False
+
     def __init__(self, app, biome_name: str):
         super().__init__(app)
         self.app = app
@@ -175,7 +225,12 @@ class BiomeCaseEditorWindow(ctk.CTkToplevel):
 
     # -- data --------------------------------------------------------------
     def _cases(self):
-        return case_grouping.biome_cases(self.app.pack, self.biome_name)
+        return case_grouping.biome_cases(
+            self.app.pack, self.biome_name, self.is_tag)
+
+    def _noun(self) -> str:
+        """'biome' or 'biome tag', for messages shared by both editors."""
+        return "biome tag" if self.is_tag else "biome"
 
     def _current_entry(self) -> Optional[Entry]:
         cases = self._cases()
@@ -281,14 +336,14 @@ class BiomeCaseEditorWindow(ctk.CTkToplevel):
 
     def _add_case(self) -> None:
         new_entry = case_grouping.add_biome_case(
-            self.app.pack, self.biome_name)
+            self.app.pack, self.biome_name, self.is_tag)
         cases = self._cases()
         self.active_case = cases.index(new_entry)
         self._refresh_case_bar()
         self._build_editor()
         self.app.on_pack_entries_changed()
         self.app.set_status(
-            f"Added Case {self.active_case + 1} for biome '{self.biome_name}'. "
+            f"Added Case {self.active_case + 1} for {self._noun()} '{self.biome_name}'. "
             "Set its conditions and songs below.")
 
     def _remove_case(self) -> None:
@@ -302,7 +357,7 @@ class BiomeCaseEditorWindow(ctk.CTkToplevel):
             detail = f"\n\nIts songs ({', '.join(victim.songs)}) go with it."
         if not messagebox.askyesno(
                 "Remove case",
-                f"Remove Case {index + 1} for biome '{self.biome_name}'?{detail}",
+                f"Remove Case {index + 1} for {self._noun()} '{self.biome_name}'?{detail}",
                 parent=self):
             return
         self.app.pack.entries = [
@@ -311,7 +366,7 @@ class BiomeCaseEditorWindow(ctk.CTkToplevel):
         self._refresh_case_bar()
         self._build_editor()
         self.app.on_pack_entries_changed()
-        self.app.set_status(f"Removed a case for biome '{self.biome_name}'.")
+        self.app.set_status(f"Removed a case for {self._noun()} '{self.biome_name}'.")
 
     # -- editor body ----------------------------------------------------------
     def _build_editor(self) -> None:
@@ -319,15 +374,16 @@ class BiomeCaseEditorWindow(ctk.CTkToplevel):
             w.destroy()
         self._category_vars = {}
 
+        if self.is_tag:
+            self._build_tag_banner()
+
         entry = self._current_entry()
         if entry is None:
-            ctk.CTkLabel(
+            _wrapping_label(
                 self.body,
-                text=("No cases yet for this biome. Click \"+ Add case\" above to "
-                      "create the first one, then add songs to it."),
-                font=_BODY, text_color=("gray40", "gray70"), justify="left",
-                wraplength=680,
-            ).pack(anchor="w", padx=10, pady=12)
+                (f"No cases yet for this {self._noun()}. Click \"+ Add case\" above to "
+                 "create the first one, then add songs to it."),
+                font=_BODY, text_color=("gray40", "gray70"))
             self.score_label.configure(text="")
             return
 
@@ -336,17 +392,18 @@ class BiomeCaseEditorWindow(ctk.CTkToplevel):
             self._build_category(entry, cat)
 
         if (entry.biomes and len(entry.biomes) > 1) or entry.dimensions or entry.blocks:
-            ctk.CTkLabel(
+            _wrapping_label(
                 self.body,
-                text=(f"{chr(0x26A0)} This case also has biome/dimension/nearby-block "
-                      "conditions beyond this biome, set from Music & Conditions. "
-                      "They stay as-is; use \"Open full editor\" below to change them."),
-                font=_SMALL, text_color=("#b45309", "#E0A030"), justify="left",
-                anchor="w", wraplength=680,
-            ).pack(anchor="w", padx=10, pady=(2, 6))
+                (f"{chr(0x26A0)} This case also has biome/dimension/nearby-block "
+                 f"conditions beyond this {self._noun()}, set from Music & Conditions. "
+                 "They stay as-is; use \"Open full editor\" below to change them."),
+                font=_SMALL, text_color=("#b45309", "#E0A030"))
 
         # -- songs --
         self._build_songs_section(entry)
+
+        # -- fallback: lets global/default songs play after this case --
+        self._build_fallback_row(entry)
 
         # -- jump to full editor --
         link_row = ctk.CTkFrame(self.body, fg_color="transparent")
@@ -363,6 +420,35 @@ class BiomeCaseEditorWindow(ctk.CTkToplevel):
         ).pack(side="left", padx=(8, 0))
 
         self._update_score_label(entry)
+
+    def _build_tag_banner(self) -> None:
+        """Tag view only. Says which biomes the tag covers -- so it is clear
+        that a song added to a case here plays in all of them -- and warns when
+        the target build predates BIOMETAG= (entries are still editable, and
+        Save Config warns again, like every other version-gated condition).
+        """
+        members = biome_customization.tag_members(self.biome_name)
+        if members:
+            shown = ", ".join(members[:8])
+            if len(members) > 8:
+                shown += f", +{len(members) - 8} more"
+            text = (f"BIOMETAG={self.biome_name} covers {len(members)} biomes "
+                    f"({shown}). Songs added to a case here play in every one "
+                    "of them, unless a higher-priority entry wins there.")
+        else:
+            text = (f"BIOMETAG={self.biome_name}: no biome list is known for this "
+                    "tag, so the simulator cannot show which biomes it covers.")
+        _wrapping_label(self.body, text, font=_SMALL,
+                        text_color=("gray40", "gray70"))
+
+        version = self.app.effective_mod_version()
+        if not mod_versions.supports(version, "BIOMETAG"):
+            _wrapping_label(
+                self.body,
+                (f"{chr(0x26A0)} The target build (Reactive Music {version}) predates "
+                 f"BIOMETAG= (needs {mod_versions.requirement('BIOMETAG')}+). "
+                 "Cases here will be flagged when you save."),
+                font=_SMALL, text_color=("#b45309", "#E0A030"))
 
     def _build_category(self, entry: Entry, cat: str) -> None:
         definition = C.FIXED_CATEGORIES[cat]
@@ -450,6 +536,36 @@ class BiomeCaseEditorWindow(ctk.CTkToplevel):
                 font=_SMALL, text_color=("gray40", "gray70"), anchor="w",
             ).pack(fill="x", padx=10, pady=(0, 6))
 
+    def _build_fallback_row(self, entry: Entry) -> None:
+        """allowFallback for this case, next to its songs. It decides whether
+        a global/default song (an entry below, with no biome) can play once
+        this case's own songs are used up -- see scopes.py.
+        """
+        card = ctk.CTkFrame(self.body, corner_radius=8)
+        card.pack(fill="x", padx=4, pady=3)
+        version = self.app.effective_mod_version()
+        available = mod_versions.supports(version, "allow_fallback")
+        text = "allowFallback"
+        if not available:
+            text += f"  (needs RM {mod_versions.requirement('allow_fallback')}+)"
+        var = tk.BooleanVar(value=bool(entry.allow_fallback))
+        check = ctk.CTkCheckBox(
+            card, text=text, variable=var, font=_BODY,
+            command=lambda e=entry, v=var: self._on_fallback_changed(e, v))
+        if not available and not entry.allow_fallback:
+            check.configure(state="disabled")
+        check.pack(anchor="w", padx=10, pady=(8, 2))
+        _wrapping_label(
+            card,
+            ("When this case's songs are used up, let the next valid entry play "
+             "(a global or default song, or a broader case) instead of repeating "
+             "this one. Turn it on if a global song never plays here."),
+            font=_SMALL, text_color=("gray40", "gray70"))
+
+    def _on_fallback_changed(self, entry: Entry, var) -> None:
+        entry.allow_fallback = bool(var.get())
+        self._changed(entry)
+
     def _add_song(self, entry: Entry) -> None:
         name = self.song_var.get().strip()
         if not name:
@@ -494,10 +610,11 @@ class BiomeCaseEditorWindow(ctk.CTkToplevel):
 # methods. Both views therefore mutate the same app.pack.entries objects and
 # keep the song-first and biome-first editors in lockstep.
 for _name in (
-    "_cases", "_current_entry", "_refresh_case_bar", "_restyle_case_tabs",
+    "_cases", "_noun", "_current_entry", "_refresh_case_bar", "_restyle_case_tabs",
     "_select_case", "_add_case", "_remove_case", "_build_editor",
-    "_build_category", "_on_category_changed", "_set_combine",
-    "_build_songs_section", "_add_song", "_remove_song", "_open_full_editor",
+    "_build_tag_banner", "_build_category", "_on_category_changed", "_set_combine",
+    "_build_songs_section", "_build_fallback_row", "_on_fallback_changed",
+    "_add_song", "_remove_song", "_open_full_editor",
     "_changed", "_update_score_label",
 ):
     setattr(BiomeCaseEditorPanel, _name, getattr(BiomeCaseEditorWindow, _name))

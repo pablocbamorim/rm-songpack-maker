@@ -174,6 +174,10 @@ class SettingsTab(ctk.CTkFrame):
                 elif biome_customization.is_bundled_default(name, is_tag):
                     color = biome_customization.default_color(name, is_tag)
                     color_from = "App default"
+                elif is_tag and biome_customization.tag_members(name):
+                    # Tags carry a biome list, not a colour: averaged from it.
+                    color = self.app.library_tab._biome_color(name, True)
+                    color_from = "Avg. of biomes"
                 else:
                     color = biome_customization.default_color(name, is_tag)
                     color_from = "Automatic"
@@ -227,8 +231,7 @@ class SettingsTab(ctk.CTkFrame):
         if not selection:
             return
         name, is_tag, _ = selection
-        current = self._store(is_tag).get(
-            name) or biome_customization.default_color(name, is_tag)
+        current = self.app.library_tab._biome_color(name, is_tag)
         result = colorchooser.askcolor(
             color=current, parent=self, title=f"Text color for {name}")
         if not result[1]:

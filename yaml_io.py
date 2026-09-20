@@ -6,6 +6,8 @@ from typing import Dict, List, Optional, Tuple
 import yaml
 
 import constants as C
+import priority
+import scopes
 from models import Songpack, Entry
 from condition_logic import build_events, parse_events
 
@@ -122,6 +124,10 @@ def load_songpack(path: str) -> Songpack:
             raw.get("forceChance", C.DEFAULT_FORCE_CHANCE))
         pack.entries.append(entry)
 
+    # Editor-only global/default markers live next to the YAML (scopes.py).
+    scopes.apply_to_entries(
+        pack.entries, scopes.load(os.path.dirname(os.path.abspath(path))))
+
     return pack
 
 
@@ -160,6 +166,9 @@ def _merge_key(entry: Entry) -> tuple:
         bool(entry.force_stop_on_invalid),
         bool(entry.force_start_on_valid),
         float(entry.force_chance),
+        # A global/default entry must never merge into a normal one that
+        # happens to share its conditions.
+        getattr(entry, "scope", C.SCOPE_NORMAL),
     )
 
 
@@ -170,7 +179,9 @@ def merge_equivalent_entries(entries: List[Entry]) -> List[Tuple[Entry, List[str
     `songs` is every song of the group, in order, without duplicates.
     """
     groups: Dict[tuple, List[Entry]] = {}
-    for entry in entries:
+    # Global/default entries always go below normal ones (priority.py), no
+    # matter what order the list is in right now.
+    for entry in priority.scope_sorted(entries):
         groups.setdefault(_merge_key(entry), []).append(entry)
 
     merged: List[Tuple[Entry, List[str]]] = []
@@ -244,6 +255,8 @@ def save_songpack(pack: Songpack, folder: str, copy_music_from: Optional[str] = 
     with open(yaml_path, "w", encoding="utf-8") as f:
         yaml.dump(data, f, Dumper=_SongpackDumper, sort_keys=False,
                   allow_unicode=True, default_flow_style=False, width=10000)
+
+    scopes.save(folder, merge_equivalent_entries(pack.entries))
 
     if copy_music_from:
         _copy_referenced_music(pack, copy_music_from,

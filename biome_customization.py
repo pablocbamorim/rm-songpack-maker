@@ -27,12 +27,28 @@ Biome map attributes (temperature / humidity / erosion / weirdness, each in
 travel with the colours: bundled values in `default_biome_colors.json`,
 per-songpack additions/overrides in `biome_customization.json`. They drive
 the Biome Map chart (see biome_chart.py).
+
+BIOME TAGS ARE MEMBERSHIP LISTS, NOT COLOURS
+--------------------------------------------
+In `default_biome_colors.json`, "biome_tags" maps each tag to the list of
+biomes it contains:
+
+    "biome_tags": {"IS_HOT": ["desert", "badlands", ...], ...}
+
+A tag therefore has no colour of its own any more; its colour is the average
+of the colours of the biomes it holds (`tag_color`), and its position and
+shape on the tag map come from the average of their chart attributes
+(`tag_attributes`). The per-songpack `biome_customization.json` is unchanged:
+its "biome_tags" is still {tag: "#rrggbb"} and, when present, overrides the
+averaged colour. An old-style bundled file (tag -> colour string) still loads;
+its colours are honoured before the average.
 """
 
 from __future__ import annotations
 
 import colorsys
 import json
+import math
 import os
 import sys
 import tempfile
@@ -49,6 +65,8 @@ _app_defaults_cache = None
 _app_attributes_cache = None
 # {biome_name: "minecraft:overworld"|...} or None if not loaded yet
 _app_dimensions_cache = None
+# {tag_name: [biome_name, ...]} or None if not loaded yet
+_app_tag_members_cache = None
 
 
 def _bundled_defaults_path() -> str:
@@ -70,17 +88,24 @@ def _clean_color_map(value) -> dict:
 
 
 def load_app_defaults(force_reload: bool = False):
-    """Load (biomes, tags) dicts from the bundled default-colours file.
+    """Load (biomes, tags) *colour* dicts from the bundled defaults file.
     Cached after the first read since this is consulted on every
     default_color() call; pass force_reload=True after writing to it.
+
+    The tags dict is only filled by an old-style file whose "biome_tags"
+    values are colour strings. In the current format they are biome lists
+    (see load_app_tag_members), so it comes back empty and a tag's colour
+    is averaged from its biomes instead (see tag_color).
     """
     global _app_defaults_cache, _app_attributes_cache, _app_dimensions_cache
+    global _app_tag_members_cache
     if force_reload:
-        # All three caches read the same file, so a forced reload has to
+        # All four caches read the same file, so a forced reload has to
         # drop all of them -- otherwise editing e.g. biome_dimensions
         # would leave stale colours in _app_defaults_cache.
         _app_attributes_cache = None
         _app_dimensions_cache = None
+        _app_tag_members_cache = None
     if _app_defaults_cache is not None and not force_reload:
         return _app_defaults_cache
     try:
@@ -170,6 +195,115 @@ def load_app_dimensions(force_reload: bool = False) -> dict:
     return _app_dimensions_cache
 
 
+def _clean_tag_members(value) -> dict:
+    """{tag: [biome, ...]}, keeping only list-valued entries. A string value
+    is an old-style colour (handled by _clean_color_map), not a membership.
+    """
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(tag): [str(b) for b in biomes if isinstance(b, str) and b]
+        for tag, biomes in value.items()
+        if isinstance(biomes, (list, tuple))
+    }
+
+
+def load_app_tag_members(force_reload: bool = False) -> dict:
+    """Bundled biome-tag membership: {"IS_HOT": ["desert", ...], ...}."""
+    global _app_tag_members_cache
+    if _app_tag_members_cache is not None and not force_reload:
+        return _app_tag_members_cache
+    try:
+        with open(_bundled_defaults_path(), encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError, TypeError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    _app_tag_members_cache = _clean_tag_members(data.get("biome_tags", {}))
+    return _app_tag_members_cache
+
+
+def _norm_tag(name: str) -> str:
+    """'IS_HOT', 'is_hot' and 'HOT' are the same tag (the IS_ prefix is
+    optional in ReactiveMusic). Mirrors simulation.normalize_tag.
+    """
+    text = str(name).strip().upper()
+    return text[3:] if text.startswith("IS_") else text
+
+
+def tag_members(name: str) -> list:
+    """The biomes a tag contains, or [] when the tag isn't in the bundled
+    table (custom tags have no membership data).
+    """
+    table = load_app_tag_members()
+    if name in table:
+        return list(table[name])
+    key = _norm_tag(name)
+    for tag, biomes in table.items():
+        if _norm_tag(tag) == key:
+            return list(biomes)
+    return []
+
+
+def tag_attributes(biome_attrs: dict, members: dict | None = None) -> dict:
+    """Chart attributes for every tag, averaged over the biomes it contains.
+
+    Returns {tag: {temperature, humidity, erosion, weirdness}}, ready to hand
+    to the Biome Map chart exactly like biome attributes:
+
+      * temperature, humidity -> plain average (where the icon sits),
+      * erosion               -> plain average (lobe depth E),
+      * weirdness             -> round(average) (lobe count f).
+
+    Weirdness is rounded (half up, matching biome_chart.weirdness_to_freq)
+    to a whole number before the chart applies f = round(4*w + 4), so a tag
+    ends up with 0, 4 or 8 lobes rather than the finer 0..8 a single biome
+    can have. To give tags the full range instead, drop the rounding line.
+
+    Members without chart attributes are skipped; a tag none of whose
+    biomes have attributes is left out (there is nowhere to draw it).
+    """
+    members = load_app_tag_members() if members is None else members
+    result = {}
+    for tag, biomes in members.items():
+        rows = [biome_attrs[b] for b in biomes if b in biome_attrs]
+        if not rows:
+            continue
+        count = len(rows)
+        avg = {key: sum(r[key] for r in rows) / count for key in ATTRIBUTE_KEYS}
+        avg["weirdness"] = float(math.floor(avg["weirdness"] + 0.5))
+        result[tag] = avg
+    return result
+
+
+def average_color(colors) -> str | None:
+    """Per-channel RGB mean of '#rrggbb' strings, or None if none are valid."""
+    rgb = [
+        (int(c[1:3], 16), int(c[3:5], 16), int(c[5:7], 16))
+        for c in colors if valid_color(c)
+    ]
+    if not rgb:
+        return None
+    count = len(rgb)
+    return "#%02x%02x%02x" % tuple(round(sum(ch) / count) for ch in zip(*rgb))
+
+
+def tag_color(name: str, biome_color=None) -> str | None:
+    """A tag's colour: the average of the colours of the biomes it contains.
+
+    `biome_color(biome_name) -> "#rrggbb"` decides what each member's colour
+    is. The default is the bundled colour (default_color); the editor passes
+    its own lookup so a songpack's recoloured biomes are reflected too.
+    Returns None for a tag with no known members.
+    """
+    members = tag_members(name)
+    if not members:
+        return None
+    pick = biome_color or (lambda biome: default_color(biome, False))
+    return average_color([pick(b) for b in members])
+
+
 def all_attributes(custom: dict | None = None) -> dict:
     """Every biome the chart can draw: the bundled attributes, with the
     current songpack's own entries (`custom`) added on top / overriding.
@@ -185,7 +319,14 @@ def save_app_default_color(name: str, is_tag: bool, color: str) -> str:
     becomes the default for every songpack, for anyone using this copy
     of the editor once the file is committed to the project's repo.
     Returns the path written, so the caller can point the user at it.
+
+    Only biomes have a bundled colour now: in the bundled file a tag maps
+    to its biome list, and its colour is averaged from those biomes.
     """
+    if is_tag:
+        raise ValueError(
+            "Biome tags have no colour of their own in the bundled defaults: "
+            "it is the average of the biomes they contain.")
     path = _bundled_defaults_path()
     try:
         with open(path, encoding="utf-8") as f:
@@ -228,8 +369,11 @@ def save_app_default_color(name: str, is_tag: bool, color: str) -> str:
 
 def remove_app_default_color(name: str, is_tag: bool) -> None:
     """Drop a name from the bundled defaults file (falls back to the
-    algorithmic colour again). No-op if it wasn't there.
+    algorithmic colour again). No-op if it wasn't there, and always a no-op
+    for tags, whose bundled entry is a biome list rather than a colour.
     """
+    if is_tag:
+        return
     path = _bundled_defaults_path()
     try:
         with open(path, encoding="utf-8") as f:
@@ -256,13 +400,18 @@ def is_bundled_default(name: str, is_tag: bool) -> bool:
 
 def default_color(name: str, is_tag: bool = False) -> str:
     """Return the colour a biome/tag should show when no per-songpack
-    override exists: the bundled app default if one has been set, else a
-    deterministic (but arbitrary) colour derived from the name.
+    override exists: the bundled app default if one has been set, else (for
+    a tag) the average of its biomes' colours, else a deterministic (but
+    arbitrary) colour derived from the name.
     """
     biomes, tags = load_app_defaults()
     bundled = (tags if is_tag else biomes).get(name)
     if bundled:
         return bundled
+    if is_tag:
+        averaged = tag_color(name)
+        if averaged:
+            return averaged
 
     hue = (sum((i + 1) * ord(c) for i, c in enumerate(name)) % 360) / 360.0
     saturation = 0.62 if is_tag else 0.58

@@ -85,12 +85,34 @@ def score_entry(entry: Entry) -> float:
     return round(score, 3)
 
 
-def auto_priority_order(entries: List[Entry]) -> List[Entry]:
-    """Return a new list, sorted rarest (highest score) first. Ties keep
-    their existing relative order (stable sort) so re-running this after
-    a manual tweak doesn't needlessly shuffle unrelated entries.
+def scope_rank(entry: Entry) -> int:
+    """0 for normal entries, 1 for global, 2 for default (see constants)."""
+    return C.SCOPE_RANK.get(getattr(entry, "scope", C.SCOPE_NORMAL), 0)
+
+
+def scope_sorted(entries: List[Entry]) -> List[Entry]:
+    """Stable sort that only moves global/default entries below normal ones,
+    keeping every manual order inside each tier.
     """
-    return sorted(entries, key=score_entry, reverse=True)
+    return sorted(entries, key=scope_rank)
+
+
+def enforce_scope_order(entries: List[Entry]) -> bool:
+    """In-place scope_sorted(). Returns True if anything moved."""
+    ordered = scope_sorted(entries)
+    if all(a is b for a, b in zip(ordered, entries)):
+        return False
+    entries[:] = ordered
+    return True
+
+
+def auto_priority_order(entries: List[Entry]) -> List[Entry]:
+    """Return a new list: normal entries first, then global, then default;
+    inside each tier rarest (highest score) first. Ties keep their existing
+    relative order (stable sort) so re-running this after a manual tweak
+    doesn't needlessly shuffle unrelated entries.
+    """
+    return sorted(entries, key=lambda e: (scope_rank(e), -score_entry(e)))
 
 
 def order_entries(entries: List[Entry]) -> List[Entry]:

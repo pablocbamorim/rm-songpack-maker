@@ -36,8 +36,11 @@ syncing:
 
 - **Music & Conditions tab** groups entries by primary song ("cases" of a
   song).
-- **Biome Simulator → right-click a biome** groups entries by `BIOME=`
-  condition ("cases" of a biome).
+- **Biome Simulator → select a biome** groups entries by `BIOME=`
+  condition ("cases" of a biome); on the **Biome tags** map it groups them by
+  `BIOMETAG=` condition ("cases" of a tag). A tag case is a plain entry — songs
+  added to a tag are *not* copied onto its biomes; the entry just matches all of
+  them (the simulator resolves tags through the bundled membership table).
 - **Priority Order tab** shows `entries` in raw list order (= play priority:
   first match wins, per the mod's own rules).
 
@@ -75,7 +78,8 @@ entry point) that also fixes tab-frame packing.
 | `models.py` | `Entry`, `Songpack`, `BiomeCondition`, `DimensionCondition`, `BlockCondition` dataclasses. The single source of truth for songpack state. |
 | `constants.py` | Fixed event categories (Special/Time/Weather/.../Combat) straight from `MAKING_SONGPACKS.md`, biome/biome-tag name lists, rarity-score weights. |
 | `condition_logic.py` | Two-way conversion: `Entry`'s structured checkbox/list state ⇄ the raw `events: [...]` YAML string array. `build_events()` and `parse_events()`. |
-| `case_grouping.py` | Groups `pack.entries` by song ("cases of a song") or by biome ("cases of a biome"). Pure functions over the entries list. |
+| `case_grouping.py` | Groups `pack.entries` by song ("cases of a song"), by biome ("cases of a biome") or, with `is_tag=True`, by biome tag ("cases of a tag"). Pure functions over the entries list. |
+| `scopes.py` | "Global" / "default" songs. `Entry.scope` is editor-only metadata persisted in `songpack_scopes.json` (keyed by an entry's events + songs, so it survives a YAML round trip). Also the blocker check (`find_blockers`, `enable_fallback_on_blockers`): which entries above a global song stop it being reached in which biomes. No special YAML output: a global/default entry is a plain entry with no `BIOME=`, pinned below normal entries. |
 | `priority.py` | Rarity scoring (`score_entry`) that drives "Auto-arrange by rarity", plus `find_broader_fallbacks` (the "mix into this entry" variety helper). |
 | `mod_versions.py` | Feature-gate table: which ReactiveMusic mod version introduced which condition/flag, Minecraft-version → mod-version lookup, and the `songpack_target.json` sidecar (editor-only metadata, never written into the actual YAML). |
 
@@ -83,24 +87,24 @@ entry point) that also fixes tab-frame packing.
 | File | Purpose |
 |---|---|
 | `yaml_io.py` | Load/save `ReactiveMusic.yaml`. Handles merging entries that share identical conditions into one YAML entry with a song pool, and matches the mod author's preferred YAML formatting style (quoted strings, indented lists). |
-| `biome_customization.py` | Two *separate* colour/attribute stores: per-songpack overrides (`biome_customization.json` next to a songpack) vs. bundled app defaults (`default_biome_colors.json` next to this script, shipped with the editor). Also owns the biome chart's temperature/humidity/erosion/weirdness attribute data. |
-| `default_biome_colors.json` | The bundled defaults data file itself (colors + dimensions + chart attributes for vanilla biomes/tags). Rarely needs to be read in full — just know it exists and what keys it has. |
+| `biome_customization.py` | Two *separate* colour/attribute stores: per-songpack overrides (`biome_customization.json` next to a songpack) vs. bundled app defaults (`default_biome_colors.json` next to this script, shipped with the editor). Also owns the biome chart's temperature/humidity/erosion/weirdness attribute data, the bundled **tag membership** (`load_app_tag_members`, `tag_members`), and everything derived from it: a tag's averaged colour (`tag_color`) and averaged chart attributes (`tag_attributes`). |
+| `default_biome_colors.json` | The bundled defaults data file itself. Keys: `biomes` (name → colour), `biome_tags` (**tag → list of the biomes it contains** — tags have no colour of their own), `biome_dimensions`, `biome_attributes` (chart data). Rarely needs to be read in full — just know what the keys are. |
 | `audio_io.py` | Pure audio logic (no tkinter): probing, waveform peak extraction, trim/export via `soundfile`+`numpy`. Safe to call from worker threads. |
 | `block_data.py` | Static list of common vanilla block IDs for the nearby-block picker. |
 
 ### 3. Simulation engine (pure logic, no GUI)
 | File | Purpose |
 |---|---|
-| `simulation.py` | "What would the mod actually play here?" engine behind the Biome Simulator tab. Implements the mod's real evaluation rules (top-to-bottom, first-valid-entry-wins, `allowFallback` chains, biome/tag/dimension/block matching, `forceStop*` transitions). Read this to understand simulator *semantics*; read `simulator_tab.py` for its UI. |
+| `simulation.py` | "What would the mod actually play here?" engine behind the Biome Simulator tab. Implements the mod's real evaluation rules (top-to-bottom, first-valid-entry-wins, `allowFallback` chains, biome/tag/dimension/block matching, `forceStop*` transitions). Tag matching uses the bundled JSON's tag lists (`_tag_table`, with a small built-in fallback), and `make_tag_state` builds the "somewhere inside a biome of tag T" situation used by the tag map. Read this to understand simulator *semantics*; read `simulator_tab.py` for its UI. |
 
 ### 4. GUI — main window & tabs
 | File | Purpose |
 |---|---|
 | `app_core.py` | **The biggest file.** Defines `App` (main window, menu, tab container) and three of the five tabs directly: `InfoTab` (songpack metadata + target mod build), `LibraryTab` (a.k.a. "Music & Conditions" — the condition editor, by far the most complex UI: fixed-category checkboxes, biome/dimension/block pickers, the Biome Map chart, case tabs, multi-select editing), `PriorityTab` (drag-reorderable priority list). Also has shared layout helpers (`_section`, `_flow_group`, typography constants). |
-| `simulator_tab.py` | Tab 4, "Biome Simulator": situation sliders (time/weather/height/underwater + collapsible extra conditions/manual facts) + the biome map + a playlist that imitates the mod, using `simulation.py` for all the actual logic. |
+| `simulator_tab.py` | Tab 4, "Simulation Map": situation sliders (time/weather/height/underwater + collapsible extra conditions/manual facts) + the map + a playlist that imitates the mod + an embedded case editor, using `simulation.py` for all the actual logic. A selector above the map switches between the **Biomes** map and the **Biome tags** map (one `BiomeChart`, mode-dependent data). Everything below the map works on a *subject*: a biome name, or `"#" + tag`. |
 | `settings_tab.py` | Tab 5, "Settings": editor-wide preferences (dark theme, double-click preview) and the biome/tag colour list editor (reads/writes via `biome_customization.py`). |
-| `biome_chart.py` | The reusable "Biome Map" canvas widget (icons placed by temperature/humidity, shaped by erosion/weirdness). Used by both `LibraryTab` (editing one entry's biomes) and `simulator_tab.py` (situation preview) — it's handed callables, so it doesn't know about `Entry` or `Songpack` at all. |
-| `biome_case_editor.py` | A `CTkToplevel` popup reached by right-clicking a biome on the simulator map: biome-first editing (as opposed to `LibraryTab`'s song-first editing), using the biome-side grouping in `case_grouping.py`. |
+| `biome_chart.py` | The reusable "Biome Map" canvas widget (icons placed by temperature/humidity, shaped by erosion/weirdness). Used by both `LibraryTab` (editing one entry's biomes) and `simulator_tab.py` (situation preview) — it's handed callables, so it doesn't know about `Entry` or `Songpack` at all. Paints a gradient backdrop plus optional night/underwater/weather layers (`render_backdrop`, Pillow-rendered and cached). |
+| `biome_case_editor.py` | Biome-first editing (as opposed to `LibraryTab`'s song-first editing), using the biome-side grouping in `case_grouping.py`. `BiomeCaseEditorPanel` is the copy embedded in the simulator's third column (with `is_tag=True` it edits the `BIOMETAG=` cases of a tag); `BiomeCaseEditorWindow` is the older standalone popup. Both share their editing methods (see the `setattr` loop at the bottom of the file). |
 | `app_settings.py` | Editor-wide preferences persisted to `~/.rm-songpack-maker/settings.json` (NOT songpack data), plus the CTk↔ttk theming bridge (ttk.Treeview/Entry/etc. don't follow CustomTkinter's theme automatically). |
 
 ### 5. Audio editing subsystem
@@ -147,8 +151,16 @@ helpers (`_section`, `_row`, `_flow_group`) live near the top of the file.
 interaction bugs → `simulator_tab.py`. Both share `biome_chart.py` for the
 map widget itself.
 
+**"Biome tag map / tag colours / tag membership":** membership lives in
+`default_biome_colors.json` → `biome_tags`; `biome_customization.py` turns it
+into positions/shape (`tag_attributes`) and colours (`tag_color`);
+`simulator_tab.py` (`_chart_biomes`, `_chart_color`, `_plan_for`) draws and
+evaluates it; `simulation.py` (`_tag_table`, `make_tag_state`) does the matching.
+
 **"Auto-arrange / priority order is wrong":** `priority.py` (`score_entry`,
-`auto_priority_order`). `constants.py` has the tunable weights.
+`auto_priority_order`). `constants.py` has the tunable weights. Scope tiers (normal → global → default) are enforced by `priority.enforce_scope_order`, called from `PriorityTab.refresh` and `yaml_io.merge_equivalent_entries`.
+
+**"Global / default songs don't play where they should":** `scopes.find_blockers` (what blocks them), `simulation.build_plan` (`terminal_entry_id` = the entry that ends the fallback chain), and the `allowFallback` checkboxes (per case in `biome_case_editor.py`, per entry in `LibraryTab`).
 
 **"Audio playback/trimming misbehaves":** `audio_io.py` (pure logic) vs.
 `audio_editor.py` (window/threading) vs. `audio_preview.py` (shared player
@@ -180,6 +192,16 @@ bundled `default_biome_colors.json`), don't conflate them.
 - `audio_preview.py`'s single shared `PreviewPlayer` instance
   (`get_player()`) is intentional — don't create a second player for a new
   feature; reuse it or preview code will fight over the pygame channel.
+- A biome tag's icon on the tag map is derived, not stored: position =
+  average temperature/humidity of its biomes, lobe depth = average erosion,
+  lobe count from **`round(average weirdness)`** (so tags only ever have 0, 4 or
+  8 lobes — deliberate, see `tag_attributes`). Its colour is the average of its
+  biomes' colours unless the songpack overrides it.
+- The `"#"` prefix on simulator subjects (`"#IS_HOT"`) is what tells a tag from
+  a biome in the shared plan cache / pinned / playlist state; it is never
+  written anywhere else.
+- The chart background is an image, not canvas items; the weather emoji is drawn as a mask so it is
+  colourless. If no emoji font is found it falls back to canvas text in a blended colour.
 - Biome/dimension/block "combine" mode (OR vs AND) is a real per-category,
   per-entry setting (`entry.fixed_combine`, `biome_combine`, etc.), not just
   a display option — see `condition_logic.build_events`.

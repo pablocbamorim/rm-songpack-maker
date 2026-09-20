@@ -16,6 +16,21 @@ WHAT YOU SEE
   or shorter. The chosen height is remembered for the rest of the session
   (the chart is rebuilt each time you switch entries).
 
+BACKGROUND
+----------
+The plot area is painted with a bilinear gradient between four corner colours
+(BACKDROP_CORNERS, keyed by (temperature, humidity) in [0, 1]) so the chart
+reads as "cold/dry -> hot/wet" even before any icon is looked at. When the
+owner passes `backdrop()` -> {"night": 0..1, "underwater": bool,
+"weather": "RAIN"|"STORM"|"SNOW"|None} the simulated situation is layered on
+top: a dark-blue night tint, a wavy water tint over the lower half, and a
+large colourless weather emoji at low opacity.
+
+tk.Canvas has neither gradients nor alpha, so the backdrop is rendered to an
+image (numpy + Pillow) by render_backdrop() and cached by chart size and
+state; hovering never re-renders it. Without Pillow the chart silently falls
+back to the flat plot colour.
+
 ICON SHAPE
 ----------
 Each icon is a closed curve in polar form:
@@ -61,6 +76,12 @@ from typing import Callable, Dict, List, Optional, Set
 
 import customtkinter as ctk
 
+try:  # Pillow ships with customtkinter; guard anyway so the chart never dies
+    import numpy as np
+    from PIL import Image, ImageDraw, ImageFont, ImageTk
+except Exception:  # noqa: BLE001
+    np = Image = ImageDraw = ImageFont = ImageTk = None  # type: ignore[assignment]
+
 #: Base radius of an icon at the reference plot size (dataset default).
 BASE_ICON_RADIUS = 16.0
 #: Plot side length (px) at which k reaches BASE_ICON_RADIUS.
@@ -84,6 +105,27 @@ _RESIZED_HEIGHT: Optional[int] = None
 _GRIP_SIZE = 18
 #: Smallest canvas height the grip will let the user shrink to.
 _MIN_HEIGHT = 160
+
+#: Gradient corners, keyed (temperature, humidity), each 0 = low, 1 = high.
+BACKDROP_CORNERS = {
+    (0, 0): "#565d5e",
+    (0, 1): "#3c4f52",
+    (1, 0): "#52433c",
+    (1, 1): "#4f4633",
+}
+#: Grid lines on top of the gradient (the theme's own grid colour is tuned
+#: for the flat plot colour and would be too harsh/dark here).
+_BACKDROP_GRID = "#6a7274"
+
+_NIGHT_TINT, _NIGHT_ALPHA = (10, 24, 70), 0.32     # sunrise/sunset use half
+_WATER_TINT, _WATER_ALPHA = (47, 111, 208), 0.22
+_WATER_FEATHER = 0.012                              # soft edge, fraction of height
+_WEATHER_EMOJI = {"RAIN": "\U0001F327", "STORM": "\u26C8", "SNOW": "\u2744"}
+_WEATHER_ALPHA = 0.16
+_WEATHER_POS = (0.5, 0.2)      # centre, as fractions of the plot (y from top)
+_WEATHER_SIZE = 0.42           # fraction of the plot's shorter side
+_EMOJI_FONTS = ("seguiemj.ttf", "NotoColorEmoji.ttf", "NotoEmoji-Regular.ttf",
+                "/System/Library/Fonts/Apple Color Emoji.ttc", "DejaVuSans.ttf")
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +186,87 @@ def to_norm(value: float) -> float:
     return (_clamp(float(value), -1.0, 1.0) + 1.0) / 2.0
 
 
+def _hex_rgb(color: str) -> tuple:
+    return tuple(int(color[i:i + 2], 16) for i in (1, 3, 5))
+
+
+def _emoji_mask(char: str, target: int):
+    """The glyph as an 'L' mask (shape only, so it comes out colourless), or
+    None if no installed font can draw it. Bitmap emoji fonts only exist at
+    one size, so 109 px is tried too and the result scaled down.
+    """
+    for name in _EMOJI_FONTS:
+        for px in (target, 109):
+            try:
+                font = ImageFont.truetype(name, px)
+                left, top, right, bottom = font.getbbox(char)
+                w, h = right - left, bottom - top
+                if w <= 0 or h <= 0:
+                    continue
+                mask = Image.new("L", (w, h), 0)
+                ImageDraw.Draw(mask).text((-left, -top), char, font=font, fill=255)
+            except Exception:  # noqa: BLE001 - missing font / unsupported glyph
+                continue
+            if mask.getbbox() is None:
+                continue
+            scale = target / max(w, h)
+            return mask.resize((max(1, round(w * scale)), max(1, round(h * scale))),
+                               Image.LANCZOS)
+    return None
+
+
+def render_backdrop(width: int, height: int, inner: tuple, night: float = 0.0,
+                    underwater: bool = False, weather: Optional[str] = None):
+    """Render the plot background. `inner` = (x, y, w, h) of the data area in
+    plot-local pixels, so the gradient corners line up with the 0/1 grid
+    lines. Returns (RGB image, text_fallback) where text_fallback is None or
+    (char, cx, cy, size_px, colour) for the caller to draw as canvas text when
+    no font could render the emoji as a mask.
+    """
+    ix, iy, iw, ih = inner
+    xs = np.arange(width, dtype="float32")
+    ys = np.arange(height, dtype="float32")
+    u = np.clip((xs - ix) / max(iw, 1.0), 0.0, 1.0)[None, :]         # temperature
+    v = np.clip(1.0 - (ys - iy) / max(ih, 1.0), 0.0, 1.0)[:, None]   # humidity
+    c = {k: np.array(_hex_rgb(col), dtype="float32")
+         for k, col in BACKDROP_CORNERS.items()}
+    img = (((1 - u) * (1 - v))[..., None] * c[(0, 0)]
+           + ((1 - u) * v)[..., None] * c[(0, 1)]
+           + (u * (1 - v))[..., None] * c[(1, 0)]
+           + (u * v)[..., None] * c[(1, 1)])
+
+    if night > 0:
+        a = _NIGHT_ALPHA * night
+        img = img * (1 - a) + np.array(_NIGHT_TINT, dtype="float32") * a
+
+    if underwater:
+        # Water surface: y = 0.5 + 0.16 sin(2 pi x), y measured from the top.
+        surface = 0.5 + 0.16 * np.sin(2 * np.pi * xs / max(width - 1, 1))
+        depth = (ys + 0.5)[:, None] / height - surface[None, :]
+        cover = (np.clip(depth / _WATER_FEATHER + 0.5, 0.0, 1.0)
+                 * _WATER_ALPHA)[..., None]
+        img = img * (1 - cover) + np.array(_WATER_TINT, dtype="float32") * cover
+
+    base = Image.fromarray(np.clip(img, 0, 255).astype("uint8"), "RGB")
+
+    fallback = None
+    char = _WEATHER_EMOJI.get(weather or "")
+    if char:
+        size = max(24, int(_WEATHER_SIZE * min(width, height)))
+        cx, cy = int(_WEATHER_POS[0] * width), int(_WEATHER_POS[1] * height)
+        mask = _emoji_mask(char, size)
+        if mask is not None:
+            layer = Image.new("L", (width, height), 0)
+            layer.paste(mask, (cx - mask.width // 2, cy - mask.height // 2))
+            layer = layer.point(lambda p: int(p * _WEATHER_ALPHA))
+            base.paste((255, 255, 255), (0, 0, width, height), layer)
+        else:
+            r, g, b = base.getpixel((min(cx, width - 1), min(cy, height - 1)))
+            mix = lambda ch: int(ch + (255 - ch) * _WEATHER_ALPHA)  # noqa: E731
+            fallback = (char, cx, cy, size, "#%02x%02x%02x" % (mix(r), mix(g), mix(b)))
+    return base, fallback
+
+
 def _palette(dark: bool) -> dict:
     if dark:
         return {
@@ -192,6 +315,7 @@ class BiomeChart(ctk.CTkFrame):
         tooltip_lines: Optional[Callable[[str], List[str]]] = None,
         action_labels: tuple = ("click to enable", "click to disable"),
         on_right_click: Optional[Callable[[str], None]] = None,
+        backdrop: Optional[Callable[[], dict]] = None,
     ):
         super().__init__(parent, fg_color="transparent")
         self._biomes = biomes
@@ -218,6 +342,11 @@ class BiomeChart(ctk.CTkFrame):
         self._mouse: Optional[tuple] = None
         self._hover_key: Optional[str] = None
         self._last_size = (0, 0)
+        # backdrop() -> {"night", "underwater", "weather"}; see module docstring.
+        self._backdrop_state = backdrop
+        self._backdrop_photo = None   # keep a reference or Tk drops the image
+        self._backdrop_key = None
+        self._backdrop_fallback = None
 
         # Resize-grip state.
         self._resizing = False
@@ -353,7 +482,10 @@ class BiomeChart(ctk.CTkFrame):
             return
         self._build_layout(rect)
         self._draw_frame(rect)
-        for icon in self._icons:
+        # Enabled/selected icons last, so their check mark is never buried
+        # under a neighbour (tags cluster tightly). sorted() is stable, so the
+        # deeper-lobes-first order among the rest is kept.
+        for icon in sorted(self._icons, key=lambda i: i.active):
             self._draw_icon(icon)
         self._draw_overlay()
         self._draw_grip()
@@ -362,14 +494,17 @@ class BiomeChart(ctk.CTkFrame):
         canvas, pal = self.canvas, self.pal
         left, top, right, bottom = rect
         ix, iy, iw, ih = self._inner
-        canvas.create_rectangle(left, top, right, bottom, fill=pal["plot"],
+        painted = self._draw_backdrop(rect)
+        canvas.create_rectangle(left, top, right, bottom,
+                                fill="" if painted else pal["plot"],
                                 outline=pal["frame"])
+        grid = _BACKDROP_GRID if painted else pal["grid"]
         small = ("", 10)
         for step in _GRID_STEPS:
             x = ix + step * iw
             y = iy + (1.0 - step) * ih
-            canvas.create_line(x, top, x, bottom, fill=pal["grid"])
-            canvas.create_line(left, y, right, y, fill=pal["grid"])
+            canvas.create_line(x, top, x, bottom, fill=grid)
+            canvas.create_line(left, y, right, y, fill=grid)
             canvas.create_text(x, bottom + 4, text=f"{step:.2f}", anchor="n",
                                fill=pal["text"], font=small)
             canvas.create_text(left - 6, y, text=f"{step:.2f}", anchor="e",
@@ -380,6 +515,40 @@ class BiomeChart(ctk.CTkFrame):
         canvas.create_text(14, (top + bottom) / 2,
                            text="Humidity  (dry → wet)", anchor="center",
                            angle=90, fill=pal["text"], font=("", 11))
+
+    def _draw_backdrop(self, rect) -> bool:
+        """Paint the gradient + situation tints. Returns False (flat plot
+        colour used instead) when Pillow is missing or rendering fails.
+        """
+        if Image is None:
+            return False
+        left, top, right, bottom = rect
+        width, height = int(right - left), int(bottom - top)
+        state = self._backdrop_state() if self._backdrop_state else {}
+        night = round(float(state.get("night", 0.0)), 3)
+        underwater = bool(state.get("underwater", False))
+        weather = state.get("weather")
+        ix, iy, iw, ih = self._inner
+        inner = (ix - left, iy - top, iw, ih)
+        key = (width, height, tuple(round(n) for n in inner),
+               night, underwater, weather)
+        try:
+            if key != self._backdrop_key:
+                image, fallback = render_backdrop(
+                    width, height, inner, night, underwater, weather)
+                self._backdrop_photo = ImageTk.PhotoImage(image)
+                self._backdrop_fallback = fallback
+                self._backdrop_key = key
+            self.canvas.create_image(left, top, image=self._backdrop_photo,
+                                     anchor="nw")
+        except Exception:  # noqa: BLE001 - a cosmetic layer must never break the map
+            self._backdrop_key = None
+            return False
+        if self._backdrop_fallback:
+            char, cx, cy, size, color = self._backdrop_fallback
+            self.canvas.create_text(left + cx, top + cy, text=char, fill=color,
+                                    font=("", -size))
+        return True
 
     def _draw_icon(self, icon: _Icon) -> None:
         canvas, k = self.canvas, self._k

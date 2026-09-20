@@ -36,6 +36,7 @@ import app_settings
 import settings_tab
 import simulator_tab
 import case_grouping
+import scopes
 from models import Songpack, Entry, BiomeCondition, DimensionCondition, BlockCondition
 
 
@@ -815,6 +816,10 @@ class LibraryTab(ctk.CTkFrame):
             name = primary.display_name()
             if len(group) > 1:
                 name += f"  \u00b7  {len(group)} cases"
+            marks = sorted({e.scope for e in group
+                            if e.scope != C.SCOPE_NORMAL})
+            if marks:
+                name += "  \u00b7  " + "/".join(marks)
             if any(not e.has_any_condition() for e in group):
                 name = self.WARNING_PREFIX + name
             self.tree.insert(
@@ -855,6 +860,8 @@ class LibraryTab(ctk.CTkFrame):
             return
         entry = Entry(songs=[name.strip()] if name.strip() else [])
         self.app.pack.entries.append(entry)
+        # New entries are normal ones: keep them above global/default entries.
+        priority.enforce_scope_order(self.app.pack.entries)
         self.refresh_tree()
         self.tree.selection_set(entry.id)
         self.tree.see(entry.id)
@@ -1345,12 +1352,19 @@ class LibraryTab(ctk.CTkFrame):
         new_entry = _add_case_to(self.app.pack, group[0].id)
         if new_entry is None:
             return
-        self.active_case = len(group)            # the new, last case
+        # A new case is a normal one, so it may have to hop above a
+        # global/default case of the same song; re-derive row and tab.
+        priority.enforce_scope_order(self.app.pack.entries)
+        group = _group_of(self.app.pack, new_entry.id)
+        row_id = group[0].id
+        self.selected_entry_ids = [row_id]
+        self.selected_entry_id = row_id
+        self.active_case = group.index(new_entry)
         self.refresh_tree(keep_selection=True)
         self.rebuild_editor()
         self.app.priority_tab.refresh()
         self.app.set_status(
-            f"Added Case {len(group) + 1} to '{group[0].display_name()}'. Set its "
+            f"Added Case {self.active_case + 1} to '{group[0].display_name()}'. Set its "
             "conditions below, then use Priority Order > Auto-arrange to place it.")
 
     def _remove_case(self):
@@ -1395,8 +1409,20 @@ class LibraryTab(ctk.CTkFrame):
         return [v for v in [*builtins, *custom] if v not in used]
 
     def _biome_color(self, value: str, is_tag: bool) -> str:
+        """Colour for a biome or biome tag. A songpack override wins; a tag
+        without one is the average of the colours of the biomes it contains
+        (each resolved through this same method, so recoloured biomes carry
+        through), then falls back to the automatic colour.
+        """
         custom = self.app.biome_custom_tags if is_tag else self.app.biome_custom_biomes
-        return custom.get(value, biome_customization.default_color(value, is_tag))
+        if value in custom:
+            return custom[value]
+        if is_tag:
+            averaged = biome_customization.tag_color(
+                value, lambda biome: self._biome_color(biome, False))
+            if averaged:
+                return averaged
+        return biome_customization.default_color(value, is_tag)
 
     # -- option labels (gate suffix) ----------------------------------------
     def _option_label(self, opt: str, available: bool = True) -> str:
@@ -1537,6 +1563,7 @@ class LibraryTab(ctk.CTkFrame):
         self._build_biome_section(entry)
         self._build_dimension_section(entry)
         self._build_block_section(entry)
+        self._build_scope_section(entry)
         self._build_advanced_section(entry)
         self._build_custom_section(entry)
         self._build_priority_section(entry)
@@ -2014,6 +2041,76 @@ class LibraryTab(ctk.CTkFrame):
                       command=lambda: self._remove_block(entry)).pack(
                           anchor="w", padx=4, pady=(0, 4))
 
+    # -- scope: global / default songs ---------------------------------------
+    _SCOPE_HELP = {
+        C.SCOPE_NORMAL: "An ordinary entry.",
+        C.SCOPE_GLOBAL: (
+            "Plays in every biome where its conditions hold (leave out BIOME=). It is pinned "
+            "below all normal entries, so it only plays where they don't win or where they "
+            "have allowFallback on. Use Priority Order > \"Check global songs\" to find and "
+            "fix entries that block it."),
+        C.SCOPE_DEFAULT: (
+            "A gap filler: plays only where no entry above handles the situation. Pinned "
+            "below all normal entries. Nothing to fix when a biome already has its own "
+            "song for these conditions; that is the point."),
+    }
+
+    def _build_scope_section(self, entry: Entry):
+        body = _section(self.editor_frame, "Scope (global / default songs)")
+        self.scope_var = tk.StringVar(
+            value=C.SCOPE_LABELS.get(entry.scope, C.SCOPE_LABELS[C.SCOPE_NORMAL]))
+        ctk.CTkSegmentedButton(
+            body, values=[C.SCOPE_LABELS[s] for s in C.SCOPES],
+            variable=self.scope_var, font=_BODY,
+            command=lambda v, e=entry: self._set_scope(e, v),
+        ).pack(anchor="w", padx=4, pady=4)
+        ctk.CTkLabel(
+            body, text=self._SCOPE_HELP.get(entry.scope, ""), font=_SMALL,
+            text_color=("gray40", "gray70"), justify="left", anchor="w",
+            wraplength=620,
+        ).pack(anchor="w", padx=6, pady=(0, 4))
+        if entry.scope == C.SCOPE_NORMAL:
+            return
+        warn = ("#b45309", "#E0A030")
+        if entry.biomes:
+            ctk.CTkLabel(
+                body,
+                text=(f"{self.WARNING_PREFIX}This case has BIOME=/BIOMETAG= conditions, so it "
+                      "will not play everywhere. Remove them, or set the scope back to Normal."),
+                font=_SMALL, text_color=warn, justify="left", anchor="w",
+                wraplength=620,
+            ).pack(anchor="w", padx=6, pady=(0, 4))
+        if not self._supports("allow_fallback"):
+            ctk.CTkLabel(
+                body,
+                text=(f"{self.WARNING_PREFIX}The target build predates allowFallback (needs "
+                      f"{mod_versions.requirement('allow_fallback')}+), so entries above this "
+                      "one cannot be made to fall through to it."),
+                font=_SMALL, text_color=warn, justify="left", anchor="w",
+                wraplength=620,
+            ).pack(anchor="w", padx=6, pady=(0, 4))
+
+    def _set_scope(self, entry: Entry, label: str):
+        scope = C.SCOPE_BY_LABEL.get(label, C.SCOPE_NORMAL)
+        if scope == entry.scope:
+            return
+        entry.scope = scope
+        priority.enforce_scope_order(self.app.pack.entries)
+        # Moving the entry can change which case is "Case 1" (the row key).
+        group = _group_of(self.app.pack, entry.id)
+        row_id = group[0].id
+        self.selected_entry_ids = [row_id]
+        self.selected_entry_id = row_id
+        self.active_case = group.index(entry)
+        self.refresh_tree(keep_selection=True)
+        self.rebuild_editor()
+        self.app.priority_tab.refresh()
+        self.app.set_status(
+            f"Scope set to {C.SCOPE_LABELS[scope]}. "
+            + ("It now sits below all normal entries in the priority order."
+               if scope != C.SCOPE_NORMAL else
+               "It is an ordinary entry again."))
+
     # -- advanced / fallback -------------------------------------------------
     def _build_advanced_section(self, entry: Entry):
         adv_body = _section(self.editor_frame,
@@ -2402,6 +2499,8 @@ class PriorityTab(ctk.CTkFrame):
                       command=lambda: self._nudge(-1)).pack(side="left", padx=3)
         ctk.CTkButton(btns, text="Move Down", width=100, font=_BODY,
                       command=lambda: self._nudge(1)).pack(side="left", padx=3)
+        ctk.CTkButton(btns, text="Check global songs…", width=160, font=_BODY,
+                      command=self._check_globals).pack(side="left", padx=3)
 
         columns = ("idx", "song", "score", "summary", "fallback")
         self.tree = ttk.Treeview(
@@ -2425,14 +2524,17 @@ class PriorityTab(ctk.CTkFrame):
     def refresh(self):
         selected = self.tree.selection()
         self.tree.delete(*self.tree.get_children())
-        # NOTE: iterate self.app.pack.entries directly, in its current
-        # manual order. Do NOT call priority.order_entries() here, or
-        # manual drag order gets thrown away on every refresh.
+        # Global/default entries always sit below normal ones. This only
+        # moves entries across those tiers; manual order inside a tier is
+        # left alone, so do NOT replace it with priority.order_entries().
+        priority.enforce_scope_order(self.app.pack.entries)
         labels = _case_labels(self.app.pack)
         for i, entry in enumerate(self.app.pack.entries, start=1):
             name = entry.display_name()
             if entry.id in labels:          # one of several cases of a song
                 name += f"  [{labels[entry.id]}]"
+            if entry.scope != C.SCOPE_NORMAL:
+                name += f"  [{entry.scope}]"
             if not entry.has_any_condition():
                 name = LibraryTab.WARNING_PREFIX + name
             self.tree.insert(
@@ -2445,6 +2547,49 @@ class PriorityTab(ctk.CTkFrame):
             )
         if selected and self.tree.exists(selected[0]):
             self.tree.selection_set(selected[0])
+
+    def _check_globals(self):
+        """Report entries that keep a global song from being reached, and
+        offer to turn allowFallback on for them (scopes.py).
+        """
+        pack = self.app.pack
+        if not any(e.scope == C.SCOPE_GLOBAL for e in pack.entries):
+            messagebox.showinfo(
+                "Global songs",
+                "No entry is marked Global yet. Set an entry's scope under "
+                "Music & Conditions > Scope.")
+            return
+        biomes = scopes.biome_dimensions(self.app.biome_custom_attributes)
+        blockers = scopes.find_blockers(pack.entries, biomes)
+        if not blockers:
+            messagebox.showinfo(
+                "Global songs",
+                "Every global song can be reached in every known biome when only "
+                "its own conditions are true.")
+            return
+        report = scopes.describe_blockers(pack.entries, blockers)
+        if not mod_versions.supports(
+                self.app.effective_mod_version(), "allow_fallback"):
+            messagebox.showwarning(
+                "Global songs are blocked",
+                report + "\n\nThe target build predates allowFallback, so this "
+                "cannot be fixed by enabling it.")
+            return
+        if not messagebox.askyesno(
+                "Global songs are blocked",
+                report + "\n\nEnable allowFallback on the blocking entries?\n\n"
+                "Note: a blocking entry then falls through to the next valid "
+                "entry once its songs are used up, which is not necessarily the "
+                "global song."):
+            return
+        changed = scopes.enable_fallback_on_blockers(pack.entries, biomes)
+        self.app.on_pack_entries_changed()
+        lib = self.app.library_tab
+        if lib.selected_entry_ids:
+            lib.rebuild_editor(force=True, refresh_bar=False)
+        self.app.set_status(
+            f"allowFallback enabled on {len(changed)} entr"
+            f"{'y' if len(changed) == 1 else 'ies'}.")
 
     def _auto_arrange(self):
         self.app.pack.entries = priority.auto_priority_order(

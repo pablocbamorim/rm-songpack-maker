@@ -8,11 +8,16 @@ editor now offers side by side:
     the same primary song (``entry.songs[0]``) is a "case" of that song --
     one row in the song list, several tabs of conditions underneath it.
 
-  * Biome-centric cases (Biome Simulator tab -> right-click a biome ->
+  * Biome-centric cases (Biome Simulator tab -> select a biome ->
     biome_case_editor.py): every Entry whose ``biomes`` list contains a
     plain (non-tag) ``BIOME=`` condition for a given biome name is a
     "case" of that biome -- the songs that can play there, one tab per
     situation (e.g. "day + sunrise", "night + sunset", "sun + rain").
+
+  * Tag-centric cases (same tab, "Biome tags" map): the same idea for
+    ``BIOMETAG=`` conditions. A tag case is an ordinary entry carrying the
+    tag, so every biome the tag contains plays its songs without anything
+    being copied onto those biomes (see simulation.biome_tags).
 
 Both groupings are computed purely from each entry's own data (its
 primary song text, its biome conditions) rather than a separate id kept
@@ -34,6 +39,7 @@ from typing import Dict, List, Optional
 
 import constants as C
 from models import BiomeCondition, Entry, Songpack
+from simulation import normalize_tag
 
 
 # ---------------------------------------------------------------------------
@@ -101,25 +107,38 @@ def case_labels(pack: Songpack) -> Dict[str, str]:
 # ---------------------------------------------------------------------------
 # Biome-centric cases
 # ---------------------------------------------------------------------------
-def biome_cases(pack: Songpack, biome_name: str) -> List[Entry]:
+def biome_cases(pack: Songpack, biome_name: str,
+                is_tag: bool = False) -> List[Entry]:
     """Entries whose ``biomes`` list contains a plain ``BIOME=`` match for
     ``biome_name`` (a biome *tag* condition doesn't count -- a tag can
     cover many biomes at once, so it isn't "a case of this one biome"),
     in priority order.
+
+    With ``is_tag=True`` it is the mirror image: entries carrying a
+    ``BIOMETAG=`` condition for the tag ``biome_name``. Tags compare the way
+    the mod does, so ``IS_HOT``, ``is_hot`` and ``HOT`` are the same tag.
     """
+    if is_tag:
+        key = normalize_tag(biome_name)
+        return [
+            e for e in pack.entries
+            if any(b.is_tag and normalize_tag(b.value) == key for b in e.biomes)
+        ]
     return [
         e for e in pack.entries
         if any((not b.is_tag) and b.value == biome_name for b in e.biomes)
     ]
 
 
-def add_biome_case(pack: Songpack, biome_name: str) -> Entry:
-    """Create a new, empty case (just the ``BIOME=`` condition, no songs
-    yet) for ``biome_name``, placed right after that biome's existing
-    cases (or at the end of the pack if this is its first case).
+def add_biome_case(pack: Songpack, biome_name: str,
+                   is_tag: bool = False) -> Entry:
+    """Create a new, empty case (just the ``BIOME=`` -- or, with
+    ``is_tag``, ``BIOMETAG=`` -- condition, no songs yet) for ``biome_name``,
+    placed right after that biome's existing cases (or at the end of the
+    pack if this is its first case).
     """
-    existing = biome_cases(pack, biome_name)
-    new_entry = Entry(biomes=[BiomeCondition(value=biome_name, is_tag=False)])
+    existing = biome_cases(pack, biome_name, is_tag)
+    new_entry = Entry(biomes=[BiomeCondition(value=biome_name, is_tag=is_tag)])
     if existing:
         last_id = existing[-1].id
         idx = next(i for i, e in enumerate(pack.entries) if e.id == last_id)
