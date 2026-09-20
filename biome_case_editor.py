@@ -172,8 +172,15 @@ class BiomeCaseEditorPanel(ctk.CTkFrame):
         bar.pack(fill="x")
         top = ctk.CTkFrame(bar, fg_color="transparent")
         top.pack(fill="x", padx=8, pady=8)
-        self._tabs_frame = ctk.CTkFrame(top, fg_color="transparent")
-        self._tabs_frame.pack(side="left", fill="x", expand=True)
+        # The simulator's third column is height-constrained, so a long row of
+        # case buttons would otherwise disappear off the right edge. Keep the
+        # case bar horizontally scrollable while leaving the remove button fixed.
+        tabs_wrap = ctk.CTkScrollableFrame(
+            top, orientation="horizontal", height=38,
+            fg_color="transparent",
+        )
+        tabs_wrap.pack(side="left", fill="x", expand=True)
+        self._tabs_frame = tabs_wrap
         self.remove_case_btn = ctk.CTkButton(
             top, text="Remove case", width=100, font=_BODY,
             fg_color=("#C24C4C", "#A03030"),
