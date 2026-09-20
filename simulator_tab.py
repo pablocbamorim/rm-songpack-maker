@@ -1,7 +1,7 @@
 """
 simulator_tab.py
 -----------------
-Tab 5: "Biome Simulator".
+Tab 4: "Simulation Map".
 
 Pick a simulated situation with the sliders at the top (time of day, weather,
 world height, underwater, plus an optional collapsible box with the remaining
