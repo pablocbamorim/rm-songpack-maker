@@ -60,6 +60,20 @@ _TAB_OFF = (("#D5D9DE", "#3A3A3A"), ("#C4C8CE", "#4A4A4A"),
 _OPEN: dict = {}
 
 
+
+# The embedded panel intentionally reuses the window editor's data/editing
+# methods. Both views therefore mutate the same app.pack.entries objects and
+# keep the song-first and biome-first editors in lockstep.
+for _name in (
+    "_cases", "_current_entry", "_refresh_case_bar", "_restyle_case_tabs",
+    "_select_case", "_add_case", "_remove_case", "_build_editor",
+    "_build_category", "_on_category_changed", "_set_combine",
+    "_build_songs_section", "_add_song", "_remove_song", "_open_full_editor",
+    "_changed", "_update_score_label",
+):
+    setattr(BiomeCaseEditorPanel, _name, getattr(BiomeCaseEditorWindow, _name))
+
+
 def open_biome_case_editor(app, biome_name: str) -> None:
     existing = _OPEN.get(biome_name)
     if existing is not None:
@@ -89,6 +103,65 @@ def _available_songs(app) -> list:
     for entry in app.pack.entries:
         names.update(entry.songs)
     return sorted(names)
+
+
+class BiomeCaseEditorPanel(ctk.CTkFrame):
+    """Embedded version of the biome-first editor used by Simulation Map.
+
+    The same editing methods as the standalone biome editor are reused here,
+    but the chrome lives inside a normal frame so the simulator can keep the
+    editor visible beside the map and playlist instead of opening a separate
+    window only after a right-click.
+    """
+
+    def __init__(self, app, biome_name: str):
+        super().__init__(app, corner_radius=10)
+        self.app = app
+        self.biome_name = biome_name
+        self.active_case = 0
+        self._case_tab_buttons = []
+        self._category_vars = {}
+        self._build_embedded_chrome()
+        self._refresh_case_bar()
+        self._select_case(0 if self._cases() else None)
+
+    def _build_embedded_chrome(self) -> None:
+        outer = ctk.CTkFrame(self, fg_color="transparent")
+        outer.pack(fill="both", expand=True, padx=8, pady=8)
+
+        ctk.CTkLabel(
+            outer, text=f"Edit: {self.biome_name}", font=_TITLE, anchor="w",
+        ).pack(fill="x", padx=4, pady=(2, 6))
+
+        bar = ctk.CTkFrame(outer, corner_radius=8)
+        bar.pack(fill="x")
+        top = ctk.CTkFrame(bar, fg_color="transparent")
+        top.pack(fill="x", padx=8, pady=8)
+        self._tabs_frame = ctk.CTkFrame(top, fg_color="transparent")
+        self._tabs_frame.pack(side="left", fill="x", expand=True)
+        self.remove_case_btn = ctk.CTkButton(
+            top, text="Remove case", width=100, font=_BODY,
+            fg_color=("#C24C4C", "#A03030"),
+            hover_color=("#A03030", "#7A2020"),
+            command=self._remove_case,
+        )
+        self.remove_case_btn.pack(side="right", padx=(6, 0))
+
+        self.body = ctk.CTkScrollableFrame(outer, fg_color="transparent")
+        self.body.pack(fill="both", expand=True, pady=(8, 0))
+
+        footer = ctk.CTkFrame(outer, fg_color="transparent")
+        footer.pack(fill="x", pady=(8, 0))
+        self.score_label = ctk.CTkLabel(
+            footer, text="", font=_SMALL, anchor="w",
+            text_color=("gray40", "gray70"),
+        )
+        self.score_label.pack(fill="x", expand=True)
+
+    def _on_close(self) -> None:
+        """Embedded editors stay mounted; selection changes control visibility."""
+        pass
+
 
 
 class BiomeCaseEditorWindow(ctk.CTkToplevel):
