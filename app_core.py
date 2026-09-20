@@ -7,10 +7,10 @@ Tabs:
   1. Songpack Info      -- the global yaml keys (name, author, ...)
   2. Music & Conditions  -- pick a song, check the conditions that should
                             trigger it, see a live preview + rarity score
-  3. Priority Order      -- the auto-computed (and freely drag-reorderable)
-                            play-priority list
-  4. Simulation Map      -- pick a situation + a biome on the map and see /
+  3. Simulation Map      -- pick a situation + a biome on the map and see /
                             hear which songs the mod would play (simulator_tab.py)
+  4. Priority Order      -- the auto-computed (and freely drag-reorderable)
+                            play-priority list
   5. Settings
 
 See README.md for the reasoning behind the rarity scoring and the
@@ -2682,10 +2682,10 @@ class App(ctk.CTk):
         self.info_tab = InfoTab(self.notebook.add("Songpack Info"), self)
         self.library_tab = LibraryTab(
             self.notebook.add("Music & Conditions"), self)
-        self.priority_tab = PriorityTab(
-            self.notebook.add("Priority Order"), self)
         self.simulator_tab = simulator_tab.SimulatorTab(
             self.notebook.add("Simulation Map"), self)
+        self.priority_tab = PriorityTab(
+            self.notebook.add("Priority Order"), self)
         self.settings_tab = settings_tab.SettingsTab(
             self.notebook.add("Settings"), self)
 
