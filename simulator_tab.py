@@ -400,7 +400,7 @@ class SimulatorTab(ctk.CTkFrame):
             return
         self.editor_placeholder.pack_forget()
         self.editor_panel = biome_case_editor.BiomeCaseEditorPanel(
-            self.app, biome)
+            self.editor_wrap, self.app, biome)
         self.editor_panel.pack(fill="both", expand=True)
 
     # ------------------------------------------------------------------
