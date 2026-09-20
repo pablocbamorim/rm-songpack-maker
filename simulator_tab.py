@@ -298,8 +298,9 @@ class SimulatorTab(ctk.CTkFrame):
             dark=bool(self.app.settings.get("dark_theme", True)),
             height=460,
         )
-        self.chart.pack(pady=0)
+        self._chart_side = 0
         map_host.bind("<Configure>", self._fit_chart_square, add="+")
+        self.after_idle(self._fit_chart_square)
 
         # ---- playlist ----------------------------------------------------
         panel = ctk.CTkFrame(body, corner_radius=10)
@@ -372,7 +373,13 @@ class SimulatorTab(ctk.CTkFrame):
         self.editor_panel = None
 
     def _fit_chart_square(self, _event=None) -> None:
-        """Keep the biome map 1:1 and centred inside the map column."""
+        """Keep the biome map 1:1 without a Tk geometry feedback loop.
+
+        The chart is positioned with ``place`` rather than repeatedly packed
+        and unpacked from the Configure callback. Repacking a child while its
+        parent is processing a Configure event can create a startup geometry
+        storm and make the application appear hung.
+        """
         host = getattr(self, "_map_host", None)
         chart = getattr(self, "chart", None)
         if host is None or chart is None:
@@ -381,12 +388,15 @@ class SimulatorTab(ctk.CTkFrame):
             width = max(1, host.winfo_width() - 12)
             height = max(1, host.winfo_height() - 12)
             side = max(160, min(width, height))
-            chart.configure(width=side, height=side)
-            chart.pack_forget()
-            chart.pack(pady=0)
+            if side == self._chart_side:
+                return
+            self._chart_side = side
+            chart.place(
+                relx=0.5, rely=0.5, anchor="center",
+                width=side, height=side,
+            )
         except tk.TclError:
             pass
-
     def _show_editor_for(self, biome: Optional[str]) -> None:
         """Show the embedded biome editor only for the selected biome."""
         if self.editor_panel is not None:
