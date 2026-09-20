@@ -2540,7 +2540,7 @@ class App(ctk.CTk):
         self.priority_tab = PriorityTab(
             self.notebook.add("Priority Order"), self)
         self.simulator_tab = simulator_tab.SimulatorTab(
-            self.notebook.add("Biome Simulator"), self)
+            self.notebook.add("Simulation Map"), self)
         self.settings_tab = settings_tab.SettingsTab(
             self.notebook.add("Settings"), self)
 
@@ -2601,7 +2601,7 @@ class App(ctk.CTk):
         self.music_source_folder = music_folder if os.path.isdir(music_folder) else None
         self.simulator_tab.reset()
         self.refresh_all()
-        self.notebook.set("Biome Simulator")
+        self.notebook.set("Simulation Map")
         self.set_status(
             f"Restored {len(self.pack_data.entries)} entries from {path}")
 
@@ -2644,7 +2644,7 @@ class App(ctk.CTk):
         self.library_tab.refresh_tree(keep_selection=True)
         # The simulator caches its plans; entries may have been edited on
         # another tab, so rebuild them whenever the simulator comes into view.
-        if self.notebook.get() == "Biome Simulator":
+        if self.notebook.get() == "Simulation Map":
             self.simulator_tab.refresh()
 
     def on_entry_conditions_changed(self, _entry: Entry):
