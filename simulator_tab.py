@@ -170,6 +170,7 @@ class SimulatorTab(ctk.CTkFrame):
         self._build_body()
         self.player.add_listener(self._on_player_state)
         self._refresh_panel()
+        self._show_editor_for(self._pinned)
 
     # ------------------------------------------------------------------
     # construction
@@ -249,36 +250,83 @@ class SimulatorTab(ctk.CTkFrame):
                      anchor="w", wraplength=520).pack(fill="x")
 
     def _build_body(self) -> None:
+        """Build the simulator as three persistent columns.
+
+        The map, playlist, and biome editor are sibling panels so selecting a
+        biome no longer requires opening a separate editor window. The map is
+        kept square and centred in its column; the other two columns use the
+        full available height for their scrollable content.
+        """
         body = ctk.CTkFrame(self, fg_color="transparent")
         body.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        body.grid_columnconfigure(0, weight=5, uniform="simulation_columns")
+        body.grid_columnconfigure(1, weight=3, uniform="simulation_columns")
+        body.grid_columnconfigure(2, weight=3, uniform="simulation_columns")
+        body.grid_rowconfigure(0, weight=1)
 
-        # ---- right: song list -----------------------------------------
-        panel = ctk.CTkFrame(body, corner_radius=10, width=450)
-        panel.pack(side="right", fill="y", padx=(8, 0))
-        panel.pack_propagate(False)
+        # ---- map ---------------------------------------------------------
+        chart_wrap = ctk.CTkFrame(body, corner_radius=10)
+        chart_wrap.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
+
+        bar = ctk.CTkFrame(chart_wrap, fg_color="transparent")
+        bar.pack(fill="x", padx=10, pady=(8, 0))
+        ctk.CTkLabel(
+            bar,
+            text="Biome map — click to select",
+            font=_BODY_BOLD,
+        ).pack(side="left")
+        self.chart_dimension_var = tk.StringVar(value="All")
+        ctk.CTkSegmentedButton(
+            bar, values=self._DIMENSIONS, variable=self.chart_dimension_var,
+            font=_BODY, command=lambda _v: self.after_idle(self._redraw_chart),
+        ).pack(side="right")
+
+        map_host = ctk.CTkFrame(chart_wrap, fg_color="transparent")
+        map_host.pack(fill="both", expand=True, padx=6, pady=6)
+        self._map_host = map_host
+
+        self.chart = biome_chart.BiomeChart(
+            map_host,
+            biomes=self._chart_biomes,
+            color_of=lambda name: self.app.library_tab._biome_color(name, False),
+            active=self._active_keys,
+            on_toggle=self._on_chart_click,
+            on_hover=self._on_chart_hover,
+            tooltip_lines=self._tooltip_lines,
+            action_labels=("click to select", "click to deselect"),
+            on_right_click=self._on_chart_right_click,
+            dark=bool(self.app.settings.get("dark_theme", True)),
+            height=460,
+        )
+        self.chart.pack(pady=0)
+        map_host.bind("<Configure>", self._fit_chart_square, add="+")
+
+        # ---- playlist ----------------------------------------------------
+        panel = ctk.CTkFrame(body, corner_radius=10)
+        panel.grid(row=0, column=1, sticky="nsew", padx=4)
 
         self.title_label = ctk.CTkLabel(
             panel, text="Biome: —", font=_SECTION, anchor="w")
         self.title_label.pack(fill="x", padx=12, pady=(10, 0))
         self.mode_label = ctk.CTkLabel(
             panel, text="", font=_SMALL, anchor="w", justify="left",
-            text_color=("gray40", "gray70"), wraplength=420)
+            text_color=("gray40", "gray70"), wraplength=360)
         self.mode_label.pack(fill="x", padx=12)
         self.now_label = ctk.CTkLabel(
             panel, text="Not playing", font=_BODY_BOLD, anchor="w",
-            justify="left", wraplength=420)
+            justify="left", wraplength=360)
         self.now_label.pack(fill="x", padx=12, pady=(6, 0))
 
         transport = ctk.CTkFrame(panel, fg_color="transparent")
         transport.pack(fill="x", padx=8, pady=(6, 0))
         self.play_btn = ctk.CTkButton(
-            transport, text="▶ Play playlist", width=140, font=_BODY,
+            transport, text="▶ Play playlist", width=130, font=_BODY,
             command=self._on_play_clicked)
         self.play_btn.pack(side="left", padx=3)
-        ctk.CTkButton(transport, text="⏭ Next", width=80, font=_BODY,
+        ctk.CTkButton(transport, text="⏭ Next", width=72, font=_BODY,
                       command=self._on_next_clicked).pack(side="left", padx=3)
         ctk.CTkButton(
-            transport, text="■ Stop", width=80, font=_BODY,
+            transport, text="■ Stop", width=72, font=_BODY,
             fg_color=("#B0B0B0", "#3A3A3A"), hover_color=("#909090", "#4A4A4A"),
             command=lambda: self._stop_playlist("Playlist stopped."),
         ).pack(side="left", padx=3)
@@ -289,17 +337,16 @@ class SimulatorTab(ctk.CTkFrame):
             tree_wrap, columns=("wave", "song", "entry", "info"),
             show="headings", selectmode="browse")
         for key, text, width, anchor, stretch in (
-            ("wave", "", 74, "center", False),
-            ("song", "Song (priority order)", 170, "w", True),
+            ("wave", "", 58, "center", False),
+            ("song", "Song", 150, "w", True),
             ("entry", "Entry", 48, "center", False),
-            ("info", "Notes", 130, "w", False),
+            ("info", "Notes", 120, "w", False),
         ):
             self.tree.heading(key, text=text)
             self.tree.column(key, width=width, anchor=anchor, stretch=stretch)
         self.tree.tag_configure("dim", foreground="gray50")
         self.tree.tag_configure("playing", foreground="#4E9BD6")
-        scroll = ttk.Scrollbar(tree_wrap, orient="vertical",
-                               command=self.tree.yview)
+        scroll = ttk.Scrollbar(tree_wrap, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scroll.set)
         scroll.pack(side="right", fill="y")
         self.tree.pack(side="left", fill="both", expand=True)
@@ -307,41 +354,54 @@ class SimulatorTab(ctk.CTkFrame):
 
         self.legend_label = ctk.CTkLabel(
             panel, text="", font=_SMALL, anchor="w", justify="left",
-            text_color=("gray40", "gray70"), wraplength=420)
+            text_color=("gray40", "gray70"), wraplength=360)
         self.legend_label.pack(fill="x", padx=12, pady=(0, 10))
 
-        # ---- left: biome map --------------------------------------------
-        chart_wrap = ctk.CTkFrame(body, corner_radius=10)
-        chart_wrap.pack(side="left", fill="both", expand=True)
-
-        bar = ctk.CTkFrame(chart_wrap, fg_color="transparent")
-        bar.pack(fill="x", padx=10, pady=(8, 0))
-        ctk.CTkLabel(
-            bar,
-            text="Biome map — hover to preview, click to pin, right-click to edit songs",
-            font=_BODY_BOLD,
-        ).pack(side="left")
-        self.chart_dimension_var = tk.StringVar(value="All")
-        ctk.CTkSegmentedButton(
-            bar, values=self._DIMENSIONS, variable=self.chart_dimension_var,
-            font=_BODY, command=lambda _v: self.after_idle(self._redraw_chart),
-        ).pack(side="right")
-
-        self.chart = biome_chart.BiomeChart(
-            chart_wrap,
-            biomes=self._chart_biomes,
-            color_of=lambda name: self.app.library_tab._biome_color(
-                name, False),
-            active=self._active_keys,
-            on_toggle=self._on_chart_click,
-            on_hover=self._on_chart_hover,
-            tooltip_lines=self._tooltip_lines,
-            action_labels=("click to pin", "click to unpin"),
-            on_right_click=self._on_chart_right_click,
-            dark=bool(self.app.settings.get("dark_theme", True)),
-            height=380,
+        # ---- biome editor ------------------------------------------------
+        self.editor_wrap = ctk.CTkFrame(body, corner_radius=10)
+        self.editor_wrap.grid(row=0, column=2, sticky="nsew", padx=(4, 0))
+        self.editor_placeholder = ctk.CTkLabel(
+            self.editor_wrap,
+            text="Select a biome on the map to edit its cases.\n\n"
+                 "The editor stays here while you work, so the map and playlist "
+                 "remain visible.",
+            font=_BODY, text_color=("gray40", "gray70"),
+            justify="center", wraplength=300,
         )
-        self.chart.pack(fill="both", expand=True, padx=6, pady=(4, 6))
+        self.editor_placeholder.pack(expand=True, padx=20)
+        self.editor_panel = None
+
+    def _fit_chart_square(self, _event=None) -> None:
+        """Keep the biome map 1:1 and centred inside the map column."""
+        host = getattr(self, "_map_host", None)
+        chart = getattr(self, "chart", None)
+        if host is None or chart is None:
+            return
+        try:
+            width = max(1, host.winfo_width() - 12)
+            height = max(1, host.winfo_height() - 12)
+            side = max(160, min(width, height))
+            chart.configure(width=side, height=side)
+            chart.pack_forget()
+            chart.pack(pady=0)
+        except tk.TclError:
+            pass
+
+    def _show_editor_for(self, biome: Optional[str]) -> None:
+        """Show the embedded biome editor only for the selected biome."""
+        if self.editor_panel is not None:
+            try:
+                self.editor_panel.destroy()
+            except tk.TclError:
+                pass
+            self.editor_panel = None
+        if not biome:
+            self.editor_placeholder.pack(expand=True, padx=20)
+            return
+        self.editor_placeholder.pack_forget()
+        self.editor_panel = biome_case_editor.BiomeCaseEditorPanel(
+            self.app, biome)
+        self.editor_panel.pack(fill="both", expand=True)
 
     # ------------------------------------------------------------------
     # public hooks used by App
@@ -364,6 +424,7 @@ class SimulatorTab(ctk.CTkFrame):
             self._stop_playlist()
         self._pinned = None
         self._preview = None
+        self._show_editor_for(None)
         self.refresh()
 
     def apply_theme(self) -> None:
@@ -490,11 +551,12 @@ class SimulatorTab(ctk.CTkFrame):
             self._refresh_panel()
 
     def _on_chart_right_click(self, name: str) -> None:
-        """Right-click a biome: open the per-biome song/case editor
-        (biome_case_editor.py) instead of pinning/unpinning it. Left-click
-        keeps its existing preview/pin behaviour untouched.
+        """Right-clicking a biome selects it just like a left-click.
+
+        The editor is now permanently embedded in the third column, so there
+        is no separate right-click-only window to open.
         """
-        biome_case_editor.open_biome_case_editor(self.app, name)
+        self._on_chart_click(name)
 
     def _on_chart_click(self, name: str) -> None:
         self._preview = name
@@ -504,6 +566,7 @@ class SimulatorTab(ctk.CTkFrame):
             self._pinned = name
             if self._playlist_active:
                 self._play_biome = name
+        self._show_editor_for(self._pinned)
         self._context_changed()
 
     # ------------------------------------------------------------------
