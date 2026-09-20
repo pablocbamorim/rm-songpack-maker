@@ -127,6 +127,9 @@ def parse_events(entry: Entry, events: List[str]) -> None:
     biome_groups: List[list] = []
     dim_groups: List[list] = []
     block_groups: List[list] = []
+    fixed_groups: dict = {
+        cat: [] for cat in C.FIXED_CATEGORY_ORDER
+    }
 
     for raw_item in events:
         raw_item = str(raw_item)
@@ -142,9 +145,7 @@ def parse_events(entry: Entry, events: List[str]) -> None:
             cats = {C.TOKEN_TO_CATEGORY[payload] for _, payload in classified}
             if len(cats) == 1:
                 cat = next(iter(cats))
-                entry.selected.setdefault(cat, set())
-                for _, payload in classified:
-                    entry.selected[cat].add(payload)
+                fixed_groups[cat].append(classified)
                 continue
 
         if kinds <= {"biome", "biometag"} and kinds:
@@ -173,6 +174,22 @@ def parse_events(entry: Entry, events: List[str]) -> None:
         for group in groups:
             for kind, payload in group:
                 append_fn(kind, payload)
+
+    for cat, groups in fixed_groups.items():
+        if not groups:
+            continue
+        entry.selected.setdefault(cat, set())
+        for group in groups:
+            for _, payload in group:
+                entry.selected[cat].add(payload)
+        # One YAML array item containing several tokens is OR. Separate
+        # array items are AND, even when they happen to belong to the same
+        # fixed checkbox category.
+        entry.fixed_combine[cat] = (
+            C.COMBINE_OR if len(groups) == 1 and len(groups[0]) > 1
+            else C.COMBINE_AND if len(groups) > 1
+            else C.COMBINE_OR
+        )
 
     _finalize(
         biome_groups, "biome_combine",
