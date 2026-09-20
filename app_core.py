@@ -2715,7 +2715,9 @@ class App(ctk.CTk):
         self.brand_background = theme.build_background(
             self, bool(self.settings.get("dark_theme", True)))
         self.brand_background.place(x=0, y=0, relwidth=1, relheight=1)
-        self.brand_background.lower()
+        # Canvas.lower() is the canvas-item API, not the widget-stacking API.
+        # Use Tk's window-level command so the backdrop stays behind all CTk widgets.
+        self.brand_background.tk.call("lower", self.brand_background._w)
 
         # Logo-gradient banner above the tabs (theme.build_header).
         self.brand_header = theme.build_header(self)
