@@ -298,6 +298,10 @@ class SimulatorTab(ctk.CTkFrame):
             dark=bool(self.app.settings.get("dark_theme", True)),
             height=460,
         )
+        # Let the chart frame fill the map column. Its actual Canvas is the
+        # square element; sizing the Canvas directly avoids depending on
+        # CustomTkinter's frame geometry propagation for the renderer.
+        self.chart.pack(fill="both", expand=True)
         self._chart_side = 0
         map_host.bind("<Configure>", self._fit_chart_square, add="+")
         self.after_idle(self._fit_chart_square)
@@ -373,12 +377,11 @@ class SimulatorTab(ctk.CTkFrame):
         self.editor_panel = None
 
     def _fit_chart_square(self, _event=None) -> None:
-        """Keep the biome map 1:1 without a Tk geometry feedback loop.
+        """Keep the biome map Canvas 1:1 and centred in its column.
 
-        The chart is positioned with ``place`` rather than repeatedly packed
-        and unpacked from the Configure callback. Repacking a child while its
-        parent is processing a Configure event can create a startup geometry
-        storm and make the application appear hung.
+        The chart frame itself fills the column, while its Canvas is placed
+        as a square. This keeps the renderer's coordinate system square
+        without relying on nested CustomTkinter frame propagation.
         """
         host = getattr(self, "_map_host", None)
         chart = getattr(self, "chart", None)
@@ -391,17 +394,15 @@ class SimulatorTab(ctk.CTkFrame):
             if side == self._chart_side:
                 return
             self._chart_side = side
-            chart.place(
+            canvas = chart.canvas
+            canvas.place(
                 relx=0.5, rely=0.5, anchor="center",
                 width=side, height=side,
             )
-            # ``place`` can size the frame before the nested canvas receives
-            # its Configure event on some Tk/CustomTkinter versions. Force a
-            # redraw once the new geometry has settled so the map cannot stay
-            # visually blank.
-            chart.after_idle(chart.redraw)
+            canvas.after_idle(chart.redraw)
         except tk.TclError:
             pass
+
     def _show_editor_for(self, biome: Optional[str]) -> None:
         """Show the embedded biome editor only for the selected biome."""
         if self.editor_panel is not None:
