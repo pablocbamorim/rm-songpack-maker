@@ -654,7 +654,8 @@ class BiomeCaseEditorWindow(ctk.CTkToplevel):
 for _name in (
     "_cases", "_noun", "_current_entry", "_refresh_case_bar", "_restyle_case_tabs",
     "_select_case", "_add_case", "_remove_case", "_build_editor",
-    "_build_tag_banner", "_build_category", "_on_category_changed", "_set_combine",
+    "_build_tag_banner", "_build_biome_tag_case_banner", "_build_category",
+    "_on_category_changed", "_set_combine",
     "_build_songs_section", "_build_fallback_row", "_on_fallback_changed",
     "_add_song", "_remove_song", "_open_full_editor",
     "_changed", "_update_score_label",
