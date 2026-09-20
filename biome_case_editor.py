@@ -143,11 +143,13 @@ class BiomeCaseEditorPanel(ctk.CTkFrame):
     #: True when ``biome_name`` is a biome *tag* (cases are BIOMETAG= entries).
     is_tag = False
 
-    def __init__(self, parent, app, biome_name: str, is_tag: bool = False):
+    def __init__(self, parent, app, biome_name: str, is_tag: bool = False,
+                 on_case_selected=None):
         super().__init__(parent, corner_radius=10)
         self.app = app
         self.biome_name = biome_name
         self.is_tag = is_tag
+        self.on_case_selected = on_case_selected
         self.active_case = 0
         self._case_tab_buttons = []
         self._category_vars = {}
@@ -338,6 +340,10 @@ class BiomeCaseEditorWindow(ctk.CTkToplevel):
         self.active_case = index or 0
         self._restyle_case_tabs()
         self._build_editor()
+        entry = self._current_entry()
+        callback = getattr(self, "on_case_selected", None)
+        if callback is not None and entry is not None:
+            callback(entry.id)
 
     def _add_case(self) -> None:
         new_entry = case_grouping.add_biome_case(
