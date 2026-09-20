@@ -172,8 +172,9 @@ def order_entries(entries: List[Entry]) -> List[Entry]:
 
 def condition_categories_present(entry: Entry) -> set:
     """A coarse fingerprint of *which kinds* of condition an entry uses,
-    ignoring the specific values. Used to detect "entry B's requirements
-    look like a subset of entry A's" for the variety-mixing helper below.
+    ignoring the specific values. Not used by is_broader_than any more (see
+    its docstring for why a category-subset test isn't sound), but kept
+    around as a cheap fingerprint other call sites may still find useful.
     """
     cats = {cat for cat in C.FIXED_CATEGORY_ORDER if entry.selected.get(cat)}
     if entry.biomes:
@@ -186,41 +187,30 @@ def condition_categories_present(entry: Entry) -> set:
 
 
 def is_broader_than(candidate: Entry, specific: Entry) -> bool:
-    """True if `candidate`'s condition *categories* are a strict subset of
-    `specific`'s, AND wherever both specify the same category, candidate's
-    values are contained in specific's (so candidate is guaranteed valid
-    whenever specific is). This is what makes candidate a sensible
-    "fallback filler" to mix into `specific`'s own song rotation.
+    """True if `candidate` is guaranteed valid whenever `specific` is --
+    i.e. `specific`'s condition logically IMPLIES `candidate`'s. This is
+    what makes candidate a sensible "fallback filler" to mix into
+    `specific`'s own song rotation: it can always play alongside it.
+
+    This used to be approximated with a "candidate's condition categories
+    are a subset of specific's, and matching categories' values are also a
+    subset" heuristic. That heuristic is unsound: it only checks categories
+    both entries share and never verifies that specific's OTHER conditions
+    (categories candidate doesn't mention at all) can't rule candidate out.
+    For example candidate={DAY} and specific={DAY-or-NIGHT, UNDERWATER}
+    passed the old test (candidate's only category, time, has DAY subset of
+    {DAY, NIGHT}) even though specific is satisfiable by NIGHT+UNDERWATER,
+    where candidate is false. It also never looked at BLOCK= conditions.
+
+    conditions.expression_implies is the real, general-purpose implication
+    check (already used for reachability hazards -- see
+    find_unreachable_hazards below) and covers every condition kind,
+    including custom/verbatim items and blocks, uniformly.
     """
-    if candidate.custom_raw_conditions:
-        # The subset test below only understands the structured fields; a
-        # verbatim/cross-category item could make the candidate NARROWER than
-        # it looks, so never claim it is guaranteed valid.
-        return False
-    cand_cats = condition_categories_present(candidate)
-    spec_cats = condition_categories_present(specific)
-    if not cand_cats or not (cand_cats < spec_cats):
-        return False
-
-    for cat in C.FIXED_CATEGORY_ORDER:
-        cand_vals = candidate.selected.get(cat, set())
-        spec_vals = specific.selected.get(cat, set())
-        if cand_vals and not cand_vals.issubset(spec_vals):
-            return False
-
-    if candidate.dimensions:
-        cand_dims = {d.value for d in candidate.dimensions}
-        spec_dims = {d.value for d in specific.dimensions}
-        if not cand_dims.issubset(spec_dims):
-            return False
-
-    if candidate.biomes:
-        cand_biomes = {(b.value, b.is_tag) for b in candidate.biomes}
-        spec_biomes = {(b.value, b.is_tag) for b in specific.biomes}
-        if not cand_biomes.issubset(spec_biomes):
-            return False
-
-    return True
+    return conditions.expression_implies(
+        condition_logic.entry_clauses(specific),
+        condition_logic.entry_clauses(candidate),
+    )
 
 
 def find_broader_fallbacks(target: Entry, all_entries: List[Entry], limit: int = 5) -> List[Entry]:

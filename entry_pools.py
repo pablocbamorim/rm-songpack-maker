@@ -131,9 +131,19 @@ class LogicalView:
 
 
 def logical_view(entries: List[Entry]) -> LogicalView:
-    raw_index = {e.id: n for n, e in enumerate(entries, start=1)}
+    # merge_groups() (via scope_ordered()) evaluates entries in scope order
+    # (normal, then global, then default), not necessarily the order the
+    # caller passed in. `positions` must number entries in that SAME order,
+    # or a caller whose list isn't already scope-sorted (e.g. the simulator,
+    # which reads app.pack.entries directly) gets stale numbers -- an entry
+    # can report a position that belonged to a different entry before the
+    # scope sort moved things around. Building raw_index from the sorted
+    # sequence keeps this helper correct on its own, without depending on
+    # every call site having already called priority.enforce_scope_order.
+    ordered = scope_ordered(entries)
+    raw_index = {e.id: n for n, e in enumerate(ordered, start=1)}
     view = LogicalView()
-    for members in merge_groups(entries):
+    for members in merge_groups(ordered):
         rep = members[0]
         if len(members) == 1:
             logical = rep

@@ -146,6 +146,30 @@ def _bool_field(raw: dict, key: str, where: str, problems: List[str]) -> bool:
     return False
 
 
+def _str_field(raw: dict, key: str, where: str, problems: List[str],
+               default: str) -> str:
+    """A single top-level scalar (name/author/description/credits/
+    musicSwitchSpeed/musicDelayLength), all of which MAKING_SONGPACKS.md
+    documents as strings. Missing is fine (falls back to `default`, same as
+    the entry-level fields do); present-but-wrong-type is reported through
+    the same `problems` list that events/songs/flags use, rather than being
+    silently accepted (e.g. a YAML list or mapping where 'name:' belongs).
+    A bare number or bool is still coerced to text -- that's PyYAML data a
+    user could reasonably have typed unquoted -- but a list or mapping
+    cannot be, and is reported instead of coerced.
+    """
+    if key not in raw:
+        return default
+    value = raw[key]
+    if isinstance(value, (list, dict)):
+        problems.append(
+            f"{where}: '{key}' must be text, got {_describe(value)}.")
+        return default
+    if value is None:
+        return default
+    return str(value)
+
+
 def _parse_entry(raw, position: int, problems: List[str]) -> Entry:
     where = f"Entry {position}"
     entry = Entry()
@@ -190,20 +214,24 @@ def load_songpack(path: str) -> Songpack:
         data = yaml.safe_load(f) or {}
 
     pack = Songpack()
+    problems: List[str] = []
 
     if isinstance(data, list):
         raw_entries = data
         pack.entries_root_key = DEFAULT_ENTRIES_ROOT_KEY
     elif isinstance(data, dict):
-        pack.name = data.get("name", pack.name)
+        where = "Songpack"
+        pack.name = _str_field(data, "name", where, problems, pack.name)
         pack.version = str(data.get("version", pack.version))
-        pack.author = data.get("author", pack.author)
-        pack.description = data.get("description", pack.description)
-        pack.credits = data.get("credits", pack.credits)
-        pack.music_switch_speed = data.get(
-            "musicSwitchSpeed", pack.music_switch_speed)
-        pack.music_delay_length = data.get(
-            "musicDelayLength", pack.music_delay_length)
+        pack.author = _str_field(data, "author", where, problems, pack.author)
+        pack.description = _str_field(
+            data, "description", where, problems, pack.description)
+        pack.credits = _str_field(
+            data, "credits", where, problems, pack.credits)
+        pack.music_switch_speed = _str_field(
+            data, "musicSwitchSpeed", where, problems, pack.music_switch_speed)
+        pack.music_delay_length = _str_field(
+            data, "musicDelayLength", where, problems, pack.music_delay_length)
 
         root_key = _find_entries_root_key(data)
         if root_key:
@@ -218,7 +246,6 @@ def load_songpack(path: str) -> Songpack:
     else:
         raise SongpackFormatError("Unrecognised ReactiveMusic.yaml structure.")
 
-    problems: List[str] = []
     for position, raw in enumerate(raw_entries, start=1):
         if not _entry_looks_like_entry(raw):
             problems.append(

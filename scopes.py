@@ -46,6 +46,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import condition_logic
+import conditions
 import constants as C
 import entry_pools
 import simulation
@@ -159,6 +160,26 @@ class Blocker:
     biomes: List[str] = field(default_factory=list)
 
 
+def _has_biome_condition(entry: Entry) -> bool:
+    """Does this entry require a specific biome/biome-tag in ANY way?
+
+    A "global" entry is only meaningful when it plays in every biome, so a
+    BIOME= or BIOMETAG= condition disqualifies it -- but that condition may
+    not live in the structured ``entry.biomes`` list. It can be hiding
+    inside a cross-category OR ("BIOME=ocean || UNDERWATER") or any other
+    item condition_logic.parse_events had to keep verbatim in
+    custom_raw_conditions (see condition_logic.py's round-trip rule). Such
+    items are still parsed on demand by conditions.py, so read the WHOLE
+    canonical expression (entry_atoms) rather than trusting the GUI field
+    alone -- otherwise a hand-written or edited entry with an embedded
+    biome requirement is analyzed as though it were biome-independent.
+    """
+    return any(
+        a.kind in (conditions.KIND_BIOME, conditions.KIND_BIOMETAG)
+        for a in condition_logic.entry_atoms(entry)
+    )
+
+
 def biome_dimensions(custom_attributes: Optional[dict] = None) -> Dict[str, str]:
     """{biome: dimension id} for every biome the editor knows about (bundled
     plus this songpack's custom ones, which are assumed to be overworld).
@@ -197,7 +218,7 @@ def find_blockers(entries: List[Entry],
     found: Dict[Tuple[str, str], Blocker] = {}
     for scoped in logical:
         if (getattr(scoped, "scope", None) != C.SCOPE_GLOBAL
-                or not scoped.songs or scoped.biomes):
+                or not scoped.songs or _has_biome_condition(scoped)):
             continue
         for atoms in _scenarios(scoped):
             manual = simulation.parse_manual("\n".join(atoms))
