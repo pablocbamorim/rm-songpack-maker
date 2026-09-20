@@ -9,7 +9,7 @@ Tabs:
                             trigger it, see a live preview + rarity score
   3. Priority Order      -- the auto-computed (and freely drag-reorderable)
                             play-priority list
-  4. Biome Simulator     -- pick a situation + a biome on the map and see /
+  4. Simulation Map      -- pick a situation + a biome on the map and see /
                             hear which songs the mod would play (simulator_tab.py)
   5. Settings
 
