@@ -61,19 +61,6 @@ _OPEN: dict = {}
 
 
 
-# The embedded panel intentionally reuses the window editor's data/editing
-# methods. Both views therefore mutate the same app.pack.entries objects and
-# keep the song-first and biome-first editors in lockstep.
-for _name in (
-    "_cases", "_current_entry", "_refresh_case_bar", "_restyle_case_tabs",
-    "_select_case", "_add_case", "_remove_case", "_build_editor",
-    "_build_category", "_on_category_changed", "_set_combine",
-    "_build_songs_section", "_add_song", "_remove_song", "_open_full_editor",
-    "_changed", "_update_score_label",
-):
-    setattr(BiomeCaseEditorPanel, _name, getattr(BiomeCaseEditorWindow, _name))
-
-
 
 def open_biome_case_editor(app, biome_name: str) -> None:
     existing = _OPEN.get(biome_name)
@@ -503,3 +490,17 @@ class BiomeCaseEditorWindow(ctk.CTkToplevel):
             self.destroy()
         except tk.TclError:
             pass
+# The embedded panel intentionally reuses the window editor's data/editing
+# methods. Both views therefore mutate the same app.pack.entries objects and
+# keep the song-first and biome-first editors in lockstep.
+for _name in (
+    "_cases", "_current_entry", "_refresh_case_bar", "_restyle_case_tabs",
+    "_select_case", "_add_case", "_remove_case", "_build_editor",
+    "_build_category", "_on_category_changed", "_set_combine",
+    "_build_songs_section", "_add_song", "_remove_song", "_open_full_editor",
+    "_changed", "_update_score_label",
+):
+    setattr(BiomeCaseEditorPanel, _name, getattr(BiomeCaseEditorWindow, _name))
+
+
+
