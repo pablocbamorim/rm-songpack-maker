@@ -48,6 +48,7 @@ import biome_customization
 import constants as C
 import entry_pools
 import simulation
+import theme
 import yaml_io
 
 _BODY = ("", 13)
@@ -137,7 +138,7 @@ class StepSlider(ctk.CTkFrame):
     def _style(self) -> None:
         for i, label in enumerate(self._tick_labels):
             if i == self._selected:
-                label.configure(text_color=("#0F5FA0", "#6DB6F5"),
+                label.configure(text_color=theme.ACCENT_TEXT,
                                 font=_SMALL_BOLD)
             else:
                 label.configure(text_color=("gray40", "gray70"), font=_SMALL)
@@ -363,7 +364,7 @@ class SimulatorTab(ctk.CTkFrame):
                       command=self._on_next_clicked).pack(side="left", padx=3)
         ctk.CTkButton(
             transport, text="■ Stop", width=72, font=_BODY,
-            fg_color=("#B0B0B0", "#3A3A3A"), hover_color=("#909090", "#4A4A4A"),
+            **theme.NEUTRAL_BUTTON,
             command=lambda: self._stop_playlist("Playlist stopped."),
         ).pack(side="left", padx=3)
 
@@ -381,9 +382,7 @@ class SimulatorTab(ctk.CTkFrame):
             self.tree.heading(key, text=text)
             self.tree.column(key, width=width, anchor=anchor, stretch=stretch)
         self.tree.tag_configure("dim", foreground="gray50")
-        self.tree.tag_configure("playing", foreground="#4E9BD6")
-        self.tree.tag_configure("selected_case", foreground="#B56A00")
-        self.tree.tag_configure("playing_selected", foreground="#B56A00")
+        self._style_tree_tags()
         scroll = ttk.Scrollbar(tree_wrap, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scroll.set)
         scroll.pack(side="right", fill="y")
@@ -481,6 +480,19 @@ class SimulatorTab(ctk.CTkFrame):
 
     def apply_theme(self) -> None:
         self.chart.set_dark(bool(self.app.settings.get("dark_theme", True)))
+        self._style_tree_tags()
+
+    def _style_tree_tags(self) -> None:
+        """Colour the playlist's "playing" / "selected case" rows. A ttk tag
+        holds one colour, not a light/dark pair, so this is re-applied from
+        apply_theme() whenever the theme flips.
+        """
+        dark = bool(self.app.settings.get("dark_theme", True))
+        selected = theme.pick(theme.TREE_SELECTED_CASE, dark)
+        self.tree.tag_configure("playing",
+                                foreground=theme.pick(theme.TREE_PLAYING, dark))
+        self.tree.tag_configure("selected_case", foreground=selected)
+        self.tree.tag_configure("playing_selected", foreground=selected)
 
     def on_biome_colors_changed(self) -> None:
         self._redraw_chart()

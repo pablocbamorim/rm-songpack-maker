@@ -34,6 +34,7 @@ import biome_customization
 import biome_chart
 import mod_versions
 import app_settings
+import theme
 import settings_tab
 import simulator_tab
 import case_grouping
@@ -89,22 +90,11 @@ def _configure_ttk_typography(root: tk.Misc, dark: bool = True) -> None:
 
     # Theme-aware Treeview colors so the list views visually belong to the
     # surrounding CTk cards in both appearance modes.
-    if dark:
-        tree_bg = "#242424"
-        tree_fg = "#DCE4EE"
-        tree_field_bg = "#242424"
-        tree_sel_bg = "#1F6AA5"
-        tree_sel_fg = "#FFFFFF"
-        heading_bg = "#2B2B2B"
-        heading_fg = "#DCE4EE"
-    else:
-        tree_bg = "#FFFFFF"
-        tree_fg = "#1A1A1A"
-        tree_field_bg = "#FFFFFF"
-        tree_sel_bg = "#3B8ED0"
-        tree_sel_fg = "#FFFFFF"
-        heading_bg = "#EAEAEA"
-        heading_fg = "#1A1A1A"
+    palette = theme.tree_colors(dark)
+    tree_bg, tree_field_bg = palette["background"], palette["field"]
+    tree_fg = palette["foreground"]
+    tree_sel_bg, tree_sel_fg = palette["selected_bg"], palette["selected_fg"]
+    heading_bg, heading_fg = palette["heading_bg"], palette["heading_fg"]
 
     style.configure(
         "Treeview",
@@ -446,7 +436,7 @@ class InfoTab(ctk.CTkFrame):
         ctk.CTkLabel(container, text="Minecraft Version:",
                      font=_BODY).grid(
             row=r, column=0, sticky="e", **pad)
-        mc_row = ctk.CTkFrame(container)
+        mc_row = ctk.CTkFrame(container, fg_color="transparent")
         mc_row.grid(row=r, column=1, sticky="w", **pad)
         ctk.CTkComboBox(
             mc_row, variable=self.mc_var, values=mod_versions.MC_CHOICES,
@@ -459,7 +449,7 @@ class InfoTab(ctk.CTkFrame):
         ctk.CTkLabel(container, text="Reactive Music Version:",
                      font=_BODY).grid(
             row=r, column=0, sticky="e", **pad)
-        mod_row = ctk.CTkFrame(container)
+        mod_row = ctk.CTkFrame(container, fg_color="transparent")
         mod_row.grid(row=r, column=1, sticky="w", **pad)
         ctk.CTkComboBox(
             mod_row, variable=self.mod_version_var,
@@ -703,8 +693,7 @@ class LibraryTab(ctk.CTkFrame):
                       command=lambda: self.app.action_load_music_folder()).pack(
                           side="left", padx=2)
         ctk.CTkButton(btn_row, text="Remove", width=80, font=_BODY,
-                      fg_color=("#C24C4C", "#A03030"),
-                      hover_color=("#A03030", "#7A2020"),
+                      **theme.DANGER_BUTTON,
                       command=self._remove_selected).pack(side="left", padx=2)
 
         # The collapse/expand control lives in the *left* panel so it stays
@@ -804,10 +793,7 @@ class LibraryTab(ctk.CTkFrame):
         dark = bool(self.app.settings.get("dark_theme", True))
         return tk.Listbox(
             parent, height=height, font=_BODY,
-            bg="#242424" if dark else "white",
-            fg="#DCE4EE" if dark else "black",
-            selectbackground="#1F6AA5" if dark else "#3B8ED0",
-            selectforeground="white",
+            **theme.listbox_colors(dark),
             highlightthickness=0, borderwidth=0, activestyle="none",
         )
 
@@ -1025,19 +1011,13 @@ class LibraryTab(ctk.CTkFrame):
         """
         if state == "all":
             text = "\u2611 " + label            # ☑
-            fg = ("#3B8ED0", "#1F6AA5")
-            hover = ("#36719F", "#144870")
-            tc = "#FFFFFF"
+            fg, hover, tc = theme.TAB_ON
         elif state == "some":
             text = "\u25A3 " + label            # ▣
-            fg = ("#C08A2A", "#B47A20")
-            hover = ("#9C6F1F", "#8A5C10")
-            tc = "#FFFFFF"
+            fg, hover, tc = theme.TAB_MIXED
         else:
             text = "\u2610 " + label            # ☐
-            fg = ("#E5E5E5", "#3A3A3A")
-            hover = ("#D5D5D5", "#4A4A4A")
-            tc = ("#1A1A1A", "#DDDDDD")
+            fg, hover, tc = theme.TAB_OFF
 
         btn = ctk.CTkButton(
             parent, text=text, command=on_click, font=_BODY,
@@ -1203,9 +1183,8 @@ class LibraryTab(ctk.CTkFrame):
     # The tab bar above the editor has one tab per case. Each tab edits one
     # Entry (see the case helpers above LibraryTab), so switching tabs simply
     # rebuilds the ordinary single-entry editor for that entry.
-    _TAB_ON = (("#3B8ED0", "#1F6AA5"), ("#36719F", "#144870"), "#FFFFFF")
-    _TAB_OFF = (("#D5D9DE", "#3A3A3A"), ("#C4C8CE", "#4A4A4A"),
-                ("#1A1A1A", "#DCE4EE"))
+    _TAB_ON = theme.TAB_ON
+    _TAB_OFF = theme.TAB_OFF
 
     def _selected_groups(self) -> list:
         """One list of case entries (Case 1, Case 2, ...) per selected song."""
@@ -1300,8 +1279,7 @@ class LibraryTab(ctk.CTkFrame):
         if single:
             ctk.CTkButton(
                 top, text="Remove case", width=110, font=_BODY,
-                fg_color=("#C24C4C", "#A03030"),
-                hover_color=("#A03030", "#7A2020"),
+                **theme.DANGER_BUTTON,
                 state="normal" if count > 1 else "disabled",
                 command=self._remove_case,
             ).pack(side="right", padx=(6, 0), anchor="n")
@@ -1320,8 +1298,8 @@ class LibraryTab(ctk.CTkFrame):
             widgets.append(ctk.CTkButton(
                 tabs, text="+ Add case", width=110, height=30,
                 corner_radius=6, font=_BODY, fg_color="transparent",
-                border_width=1, text_color=("#1A1A1A", "#DCE4EE"),
-                hover_color=("#D5D9DE", "#3A3A3A"),
+                border_width=1, text_color=theme.OUTLINE_TEXT,
+                hover_color=theme.OUTLINE_HOVER,
                 command=self._add_case))
         _flow_group(tabs, widgets, gap_x=6, gap_y=2)
 
@@ -1663,8 +1641,8 @@ class LibraryTab(ctk.CTkFrame):
         window.transient(self)
         window.grab_set()
         window.minsize(420, 260)
-        window.configure(bg="#242424" if self.app.settings.get(
-            "dark_theme", True) else "white")
+        window.configure(bg=theme.toplevel_bg(
+            bool(self.app.settings.get("dark_theme", True))))
 
         body = ctk.CTkFrame(window, corner_radius=0)
         body.pack(fill="both", expand=True, padx=14, pady=14)
@@ -1712,8 +1690,7 @@ class LibraryTab(ctk.CTkFrame):
             self.app.set_status("Updated songs for this entry.")
 
         ctk.CTkButton(btns, text="Cancel", width=90, font=_BODY,
-                      fg_color=("#B0B0B0", "#3A3A3A"),
-                      hover_color=("#909090", "#4A4A4A"),
+                      **theme.NEUTRAL_BUTTON,
                       command=window.destroy).pack(side="right", padx=(6, 0))
         ctk.CTkButton(btns, text="Apply", width=90, font=_BODY,
                       command=save).pack(side="right")
@@ -1978,8 +1955,7 @@ class LibraryTab(ctk.CTkFrame):
                 index, foreground=self._biome_color(b.value, b.is_tag))
         ctk.CTkButton(biome_body, text="Remove selected", width=140,
                       font=_BODY,
-                      fg_color=("#B0B0B0", "#3A3A3A"),
-                      hover_color=("#909090", "#4A4A4A"),
+                      **theme.NEUTRAL_BUTTON,
                       command=lambda: self._remove_biome(entry)).pack(
                           anchor="w", padx=4, pady=(0, 4))
 
@@ -2017,8 +1993,7 @@ class LibraryTab(ctk.CTkFrame):
             self.dim_listbox.insert("end", d.value)
         ctk.CTkButton(dim_body, text="Remove selected", width=140,
                       font=_BODY,
-                      fg_color=("#B0B0B0", "#3A3A3A"),
-                      hover_color=("#909090", "#4A4A4A"),
+                      **theme.NEUTRAL_BUTTON,
                       command=lambda: self._remove_dimension(entry)).pack(
                           anchor="w", padx=4, pady=(0, 4))
 
@@ -2095,8 +2070,7 @@ class LibraryTab(ctk.CTkFrame):
                 "end", f"{b.block_id}  (min {b.min_count})")
         ctk.CTkButton(block_body, text="Remove selected", width=140,
                       font=_BODY,
-                      fg_color=("#B0B0B0", "#3A3A3A"),
-                      hover_color=("#909090", "#4A4A4A"),
+                      **theme.NEUTRAL_BUTTON,
                       command=lambda: self._remove_block(entry)).pack(
                           anchor="w", padx=4, pady=(0, 4))
 
@@ -2388,8 +2362,8 @@ class LibraryTab(ctk.CTkFrame):
         window.resizable(False, False)
         window.transient(self)
         window.grab_set()
-        window.configure(bg="#242424" if self.app.settings.get(
-            "dark_theme", True) else "white")
+        window.configure(bg=theme.toplevel_bg(
+            bool(self.app.settings.get("dark_theme", True))))
 
         body = ctk.CTkFrame(window, corner_radius=0)
         body.pack(padx=14, pady=14)
@@ -2454,8 +2428,7 @@ class LibraryTab(ctk.CTkFrame):
             )
 
         ctk.CTkButton(body, text="Cancel", width=90, font=_BODY,
-                      fg_color=("#B0B0B0", "#3A3A3A"),
-                      hover_color=("#909090", "#4A4A4A"),
+                      **theme.NEUTRAL_BUTTON,
                       command=window.destroy).grid(
             row=3, column=1, padx=4, pady=(8, 0), sticky="e")
         ctk.CTkButton(body, text="Add", width=90, font=_BODY,
@@ -2705,7 +2678,7 @@ class PriorityTab(ctk.CTkFrame):
 # ---------------------------------------------------------------------------
 class App(ctk.CTk):
     def __init__(self):
-        ctk.set_default_color_theme("blue")
+        theme.install_ctk_theme()
         self.settings = app_settings.load()
         ctk.set_appearance_mode(
             "dark" if self.settings.get("dark_theme", True) else "light")
@@ -2737,6 +2710,16 @@ class App(ctk.CTk):
         )
 
         self._build_menu()
+
+        # Logo-gradient backdrop behind the application, kept deliberately subtle.
+        self.brand_background = theme.build_background(
+            self, bool(self.settings.get("dark_theme", True)))
+        self.brand_background.place(x=0, y=0, relwidth=1, relheight=1)
+        self.brand_background.lower()
+
+        # Logo-gradient banner above the tabs (theme.build_header).
+        self.brand_header = theme.build_header(self)
+        self.brand_header.pack(fill="x")
 
         self.notebook = ctk.CTkTabview(self, command=self._on_tab_changed)
         self.notebook.pack(fill="both", expand=True)

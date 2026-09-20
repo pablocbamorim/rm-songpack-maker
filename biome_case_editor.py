@@ -50,6 +50,7 @@ import condition_logic
 import constants as C
 import mod_versions
 import priority
+import theme
 import yaml_io
 from models import Entry
 
@@ -60,9 +61,8 @@ _TITLE = ("", 17, "bold")
 _SMALL = ("", 11)
 _SMALL_BOLD = ("", 11, "bold")
 
-_TAB_ON = (("#3B8ED0", "#1F6AA5"), ("#36719F", "#144870"), "#FFFFFF")
-_TAB_OFF = (("#D5D9DE", "#3A3A3A"), ("#C4C8CE", "#4A4A4A"),
-            ("#1A1A1A", "#DCE4EE"))
+_TAB_ON = theme.TAB_ON
+_TAB_OFF = theme.TAB_OFF
 
 #: One open editor per biome name at a time, so right-clicking the same
 #: biome twice focuses the existing window instead of stacking copies.
@@ -183,8 +183,7 @@ class BiomeCaseEditorPanel(ctk.CTkFrame):
         self._tabs_frame = tabs_wrap
         self.remove_case_btn = ctk.CTkButton(
             top, text="Remove case", width=100, font=_BODY,
-            fg_color=("#C24C4C", "#A03030"),
-            hover_color=("#A03030", "#7A2020"),
+            **theme.DANGER_BUTTON,
             command=self._remove_case,
         )
         self.remove_case_btn.pack(side="right", padx=(6, 0))
@@ -277,7 +276,7 @@ class BiomeCaseEditorWindow(ctk.CTkToplevel):
         self._tabs_frame.pack(side="left", fill="x", expand=True)
         self.remove_case_btn = ctk.CTkButton(
             top, text="Remove case", width=110, font=_BODY,
-            fg_color=("#C24C4C", "#A03030"), hover_color=("#A03030", "#7A2020"),
+            **theme.DANGER_BUTTON,
             command=self._remove_case,
         )
         self.remove_case_btn.pack(side="right", padx=(6, 0))
@@ -295,7 +294,7 @@ class BiomeCaseEditorWindow(ctk.CTkToplevel):
         self.score_label.pack(side="left", fill="x", expand=True)
         ctk.CTkButton(
             footer, text="Close", width=90, font=_BODY,
-            fg_color=("#B0B0B0", "#3A3A3A"), hover_color=("#909090", "#4A4A4A"),
+            **theme.NEUTRAL_BUTTON,
             command=self._on_close,
         ).pack(side="right")
 
@@ -318,8 +317,8 @@ class BiomeCaseEditorWindow(ctk.CTkToplevel):
         ctk.CTkButton(
             self._tabs_frame, text="+ Add case", width=110, height=30,
             corner_radius=6, font=_BODY, fg_color="transparent",
-            border_width=1, text_color=("#1A1A1A", "#DCE4EE"),
-            hover_color=("#D5D9DE", "#3A3A3A"), command=self._add_case,
+            border_width=1, text_color=theme.OUTLINE_TEXT,
+            hover_color=theme.OUTLINE_HOVER, command=self._add_case,
         ).pack(side="left", padx=(0, 6))
         self.remove_case_btn.configure(
             state="normal" if cases else "disabled")
@@ -590,7 +589,7 @@ class BiomeCaseEditorWindow(ctk.CTkToplevel):
                           side="left", padx=2)
         ctk.CTkButton(
             add_row, text="Remove selected", width=140, font=_BODY,
-            fg_color=("#B0B0B0", "#3A3A3A"), hover_color=("#909090", "#4A4A4A"),
+            **theme.NEUTRAL_BUTTON,
             command=lambda e=entry: self._remove_song(e),
         ).pack(side="left", padx=2)
 

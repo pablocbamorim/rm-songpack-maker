@@ -76,6 +76,8 @@ from typing import Callable, Dict, List, Optional, Set
 
 import customtkinter as ctk
 
+import theme
+
 try:  # Pillow ships with customtkinter; guard anyway so the chart never dies
     import numpy as np
     from PIL import Image, ImageDraw, ImageFont, ImageTk
@@ -268,19 +270,7 @@ def render_backdrop(width: int, height: int, inner: tuple, night: float = 0.0,
 
 
 def _palette(dark: bool) -> dict:
-    if dark:
-        return {
-            "canvas": "#1C1C1C", "plot": "#232323", "frame": "#3A3A3A",
-            "grid": "#2E2E2E", "text": "#9AA0A6", "outline": "#1C1C1C",
-            "hover": "#F2F2F2", "tip_bg": "#0F0F0F", "tip_fg": "#F2F2F2",
-            "tip_sub": "#B0B6BC", "tip_border": "#5A5A5A",
-        }
-    return {
-        "canvas": "#FAFAFA", "plot": "#FFFFFF", "frame": "#CCCCCC",
-        "grid": "#E6E6E6", "text": "#666666", "outline": "#FAFAFA",
-        "hover": "#1A1A1A", "tip_bg": "#2B2B2B", "tip_fg": "#FFFFFF",
-        "tip_sub": "#C8C8C8", "tip_border": "#1A1A1A",
-    }
+    return theme.chart_palette(dark)
 
 
 @dataclass

@@ -52,6 +52,7 @@ import customtkinter as ctk
 
 import audio_io
 import audio_preview
+import theme
 
 try:  # the editor can add a trimmed copy to the songpack after saving
     from models import Entry
@@ -81,29 +82,7 @@ _OPEN: dict = {}
 
 
 def _palette(dark: bool) -> dict:
-    if dark:
-        return {
-            "canvas": "#1C1C1C",
-            "wave": "#4E9BD6",
-            "wave_edge": "#2F6F9E",
-            "grid": "#2E2E2E",
-            "axis": "#3A3A3A",
-            "dim": "#101010",
-            "handle": "#E8B33C",
-            "playhead": "#F2F2F2",
-            "text": "#9AA0A6",
-        }
-    return {
-        "canvas": "#FAFAFA",
-        "wave": "#3B8ED0",
-        "wave_edge": "#2A6FA8",
-        "grid": "#E6E6E6",
-        "axis": "#CCCCCC",
-        "dim": "#FFFFFF",
-        "handle": "#B07A10",
-        "playhead": "#1A1A1A",
-        "text": "#666666",
-    }
+    return theme.waveform_palette(dark)
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +268,7 @@ class AudioEditorWindow(ctk.CTkToplevel):
 
         self.select_all_btn = ctk.CTkButton(
             row, text="Select whole track", width=140, font=_BODY,
-            fg_color=("#B0B0B0", "#3A3A3A"), hover_color=("#909090", "#4A4A4A"),
+            **theme.NEUTRAL_BUTTON,
             command=self._select_all)
         self.select_all_btn.pack(side="right", padx=4)
 
@@ -313,7 +292,7 @@ class AudioEditorWindow(ctk.CTkToplevel):
         self.play_btn.pack(side="left", padx=4)
         self.stop_btn = ctk.CTkButton(
             prow, text="■  Stop", width=90, font=_BODY,
-            fg_color=("#B0B0B0", "#3A3A3A"), hover_color=("#909090", "#4A4A4A"),
+            **theme.NEUTRAL_BUTTON,
             command=self._stop_play)
         self.stop_btn.pack(side="left", padx=4)
 
@@ -352,12 +331,12 @@ class AudioEditorWindow(ctk.CTkToplevel):
 
         self.close_btn = ctk.CTkButton(
             footer, text="Close", width=90, font=_BODY,
-            fg_color=("#B0B0B0", "#3A3A3A"), hover_color=("#909090", "#4A4A4A"),
+            **theme.NEUTRAL_BUTTON,
             command=self._on_close)
         self.close_btn.pack(side="right", padx=4)
         self.replace_btn = ctk.CTkButton(
             footer, text="Replace original…", width=150, font=_BODY,
-            fg_color=("#C24C4C", "#A03030"), hover_color=("#A03030", "#7A2020"),
+            **theme.DANGER_BUTTON,
             command=self._replace_original)
         self.replace_btn.pack(side="right", padx=4)
         self.save_new_btn = ctk.CTkButton(
@@ -380,8 +359,7 @@ class AudioEditorWindow(ctk.CTkToplevel):
         for text, delta in (("−", -0.1), ("+", 0.1)):
             ctk.CTkButton(
                 parent, text=text, width=30, font=_BODY,
-                fg_color=("#B0B0B0", "#3A3A3A"),
-                hover_color=("#909090", "#4A4A4A"),
+                **theme.NEUTRAL_BUTTON,
                 command=lambda w=which, d=delta: self._nudge(w, d),
             ).pack(side="left", padx=2)
         return field
