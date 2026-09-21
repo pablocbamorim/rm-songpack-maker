@@ -203,6 +203,23 @@ class BiomeCaseEditorPanel(ctk.CTkFrame):
         """Embedded editors stay mounted; selection changes control visibility."""
         pass
 
+    def show_case_for(self, entry_ids) -> bool:
+        """Open the tab of the first case (priority order) whose id is in
+        ``entry_ids``, unless the tab already open is one of them, so a case
+        the user picked by hand is never yanked away while it still fits.
+        Used by the simulator to open "the case for the simulated
+        conditions". Returns True when a matching tab is open afterwards.
+        """
+        wanted = set(entry_ids)
+        current = self._current_entry()
+        if current is not None and current.id in wanted:
+            return True
+        for index, case in enumerate(self._cases()):
+            if case.id in wanted:
+                self._select_case(index)
+                return True
+        return False
+
 
 
 class BiomeCaseEditorWindow(ctk.CTkToplevel):

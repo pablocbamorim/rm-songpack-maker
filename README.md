@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/pablocbamorim/rm-songpack-maker/releases/tag/v0.1.8.0"><strong>Download for Windows</strong></a>
+  <a href="https://github.com/pablocbamorim/rm-songpack-maker/releases/tag/v0.2.0.0"><strong>Download for Windows</strong></a>
   &nbsp;|&nbsp;
   <a href="https://github.com/pablocbamorim/rm-songpack-maker/releases"><strong>View Releases</strong></a>
 </p>
@@ -21,10 +21,12 @@ This is especially useful when a songpack grows beyond a few entries. Instead of
 - Create and edit songpacks through a graphical interface instead of hand-writing YAML.
 - Import songs directly from a music folder and build entries from the detected audio files.
 - Configure ReactiveMusic conditions through structured controls, including biome, biome tags, dimensions, blocks, time, weather, and other events.
+- Several cases per song: give one song multiple sets of conditions ("day + forest", "night + rain", ...), each on its own tab with its own advanced settings.
 - Manage custom biome and biome-tag definitions with visual colors.
 - Automatically suggest entry priority based on condition specificity, with manual reordering when needed.
 - Configure advanced playback behavior such as fallback, force stop/start, and force chance.
 - Search and filter entries and get warnings for potentially problematic configurations.
+- Pick biomes on a map: click biomes on a temperature/humidity chart to add or remove `BIOME=` conditions instead of typing names.
 
 <p align="center">
   <img src="assets/editorshowcase_1.png" width="45%" />
@@ -37,6 +39,12 @@ This is especially useful when a songpack grows beyond a few entries. Instead of
   <img src="assets/multiselectshowcase.png" alt="Soundpack Maker">
 </p>
 
+- Simulation Map tab: choose a situation (time of day, weather, world height, underwater, plus any other condition), then hover or click a biome (or a biome tag) on the map to see which songs ReactiveMusic would play there, in priority order. Double-click a song to start a playlist that imitates the mod. Select a biome and edit its cases right beside the map (conditions, songs and `allowFallback`) while the playlist updates as you go.
+<p align="center">
+  <img src="assets/sim_map1.png" width="45%" />
+  <img src="assets/sim_map2.png" width="45%" />
+</p>
+
 - Preview songs
 - Trim and replace tracks as you wish
 
@@ -44,11 +52,9 @@ This is especially useful when a songpack grows beyond a few entries. Instead of
   <img src="assets/audioeditorshowcase.png" alt="Soundpack Maker">
 </p>
 
-- **Biome Simulator** tab: choose a situation (time of day, weather, world height, underwater, plus any other condition), hover or click a biome on the map and see which songs ReactiveMusic would play there, in priority order. Double-click a song to start a playlist that imitates the mod.
-- **Global and default songs**: mark a song's case as *Global* (plays in every biome where its conditions hold) or *Default* (fills gaps where no biome-specific entry handles the situation). No per-biome copies are generated; the entry is written with no `BIOME=` and pinned below all normal entries, and **Check global songs…** on the Priority Order tab finds entries that block a global song and can turn `allowFallback` on for them.
 - Choose a target Minecraft / ReactiveMusic build so unsupported conditions are identified before saving.
 - Keep unsupported or custom conditions instead of losing them when editing a songpack: cross-category ORs such as `BIOME=ocean || UNDERWATER`, several OR groups in one category and unknown YAML keys (for example `alwaysPlay`) are preserved exactly, and the simulator, priority scoring, biome views and version checks all understand them.
-- **Check before saving**: songless entries, entries with no conditions and entries that can never play (a broader entry above them has no `allowFallback`) are listed before the file is written; you decide whether to save anyway.
+- Check before saving: songless entries, entries with no conditions and entries that can never play (a broader entry above them has no `allowFallback`) are listed before the file is written; you decide whether to save anyway.
 
 <p align="center">
   <img src="assets/infotabshowcase.png" alt="Soundpack Maker">
@@ -56,9 +62,14 @@ This is especially useful when a songpack grows beyond a few entries. Instead of
 
 ## Coming soon
 
-- UI improvements and general workflow polish.
-- A biome condition editor based on a temperature/humidity chart, making it possible to select biomes visually and combine them with the same condition logic used elsewhere.
-- More planned improvements to make building and testing songpacks faster and easier.
+Planned improvements, roughly in priority order:
+
+- **Unsaved-changes protection** Track whether the songpack changed and warn before Exit / New / Load, add Ctrl+S to save back to the current folder without asking for it each time, and add undo/redo for condition edits.
+- **Custom and modded biomes on the maps.** Custom biomes only get a display colour today, so they do not appear on the maps unless their chart attributes are added to `biome_customization.json` by hand. A small editor for temperature/humidity/erosion/weirdness and tag membership, plus an "import biome names" helper for modpacks, would fix that.
+- **Coverage view in the Simulation Map.** Highlight biomes that have no playable song for the current situation, and add a report that sweeps every time/weather/height combination to list the gaps and the songs that never get picked.
+- **Song pool rows.** Pool members after the first song have no row of their own in the Music & Conditions list yet; show and edit them individually.
+- **Export helpers.** Zip a finished songpack ready for `resourcepacks`, and import an existing songpack together with its music folder.
+- Ongoing UI polish and workflow improvements.
 
 ## Windows installation
 
@@ -135,6 +146,8 @@ music/
 
 creates entries for `Route 10`, `Battle Theme`, and `Cave`.
 
+If a filename contains spaces, accents or other characters that can be troublesome in a mod's file references, the editor offers to rename the files before adding them (for example `Route 10` becomes `Route_10`). Answer *No* to keep the original names.
+
 **Song pools on save:** entries that sit next to each other in the priority order and have identical conditions and flags are written as one YAML entry with several songs. Entries that are *not* adjacent are never merged, because that would move a song above the entries between them. The simulator uses exactly this saved shape. After saving and reloading, such a run appears as a single pool entry.
 
 **Important:** `Save Config…` currently does not copy the audio files. Make sure the referenced files are present in the songpack's `music` folder yourself.
@@ -164,6 +177,22 @@ BLOCK=...,count
 
 It also preserves raw conditions it does not recognize instead of silently discarding them.
 
+### 4a. Pick biomes on the map
+
+At the top of a song's condition editor, the **Biome Map** places every known biome at its temperature (x) and humidity (y). Click a biome to add it as a `BIOME=` condition for the case you are editing; click it again to remove it. Enabled biomes are drawn as a check mark in their own colour.
+
+- Icon shape encodes erosion (lobe depth) and weirdness (lobe count). Hover an icon for its name and coordinates.
+- `BIOME=` is a soft match, so `BIOME=forest` also lights up `dark_forest`, `birch_forest` and every other biome with "forest" in its name, just as in the game. Clicking a biome that is already matched by a broader condition tells you instead of adding a duplicate.
+- The **Dimension** filter (All / Overworld / Nether / End) limits the map to biomes of that dimension. **Hide map** collapses it, and the grip in its bottom-right corner resizes it (the height is remembered for the session).
+- The OR/AND selector next to the map is the same setting as the one in the Biome section below it; the list and picker there stay in sync with your clicks.
+- The Simulation Map tab (see below) uses the same kind of map, and adds a **Biome tags** version of it.
+
+### 4b. Give a song several cases
+
+A song plays whenever *any* of its cases matches. Use **+ Add case** above the editor to add another set of conditions to the selected song and **Remove case** to delete one; each case has its own conditions and advanced settings. In `ReactiveMusic.yaml` every case is simply its own entry that lists the same song, so priority order, the simulator and version checks all keep working. Rows in the song list show `· N cases`, and the Priority Order tab labels them `[case 2/3]`.
+
+Select several songs to edit the same case number across all of them at once.
+
 ### 5. Configure advanced behavior
 
 The **Advanced / Fallback Behaviour** section exposes ReactiveMusic options such as `allowFallback`, `forceStopMusicOnChanged`, `forceStopMusicOnValid`, `forceStopMusicOnInvalid`, `forceStartMusicOnValid`, and `forceChance`.
@@ -187,6 +216,8 @@ Your Songpack/
 
 The second and third files are editor metadata: custom biome/biome-tag display colors, and the target Minecraft/mod version. A fourth, `songpack_scopes.json`, appears only when some entry is marked Global or Default. ReactiveMusic itself does not read any of them.
 
+After writing, the editor reloads the YAML and verifies that it means the same thing as what is in the editor (conditions, song pools, flags, unknown keys and priority order). A mismatch is reported instead of being silently accepted.
+
 Create a `music` subfolder and place all referenced audio files there:
 
 ```text
@@ -201,9 +232,15 @@ Your Songpack/
 
 `biome_customization.json` is editor metadata for custom biome/biome-tag display colors; ReactiveMusic does not use it for its event logic.
 
-## Simulating what plays in a biome
+## Simulation Map: preview and edit
 
-Open **Biome Simulator** to test a songpack without launching Minecraft.
+Open **Simulation Map** to test a songpack without launching Minecraft, and to edit it from a biome's point of view instead of a song's. It is also the tab the editor opens on.
+
+The tab has three columns that stay on screen together:
+
+1. **The map**: a temperature/humidity chart of biomes (or biome tags). Its background reflects the simulated situation: a dark-blue tint at night (half as strong at sunrise/sunset), a wavy water tint when underwater, and a faint rain, storm or snow symbol. The Dimension filter works as on the Biome Map.
+2. **The playlist**: the songs ReactiveMusic would play for the selected biome, in priority order.
+3. **The editor**: the *cases* of the selected biome, editable in place (see [Editing a biome from the map](#editing-a-biome-from-the-map)).
 
 - The sliders at the top pick exactly one option each for **time of day**, **weather** and **world height**, and a switch toggles **underwater**. **More conditions** (hidden by default) holds the remaining events (`HOME`, `BOSS`, `VILLAGE`, ...) and a manual box for facts the simulator cannot infer, such as `DIM=NETHER`, `BLOCK=nether_bricks,1000` or `BIOMETAG=IS_WET`.
 - Hover a biome on the map to see its songs in priority order; click it to pin the list. Double-click a song to start a playlist (needs the music folder loaded); the playing song gets a sound-wave marker.
@@ -211,6 +248,16 @@ Open **Biome Simulator** to test a songpack without launching Minecraft.
 - **Biome tags map:** the selector above the map switches between the Biomes map and a Biome tags map in the same style. Each tag is drawn at the average temperature/humidity of the biomes it contains (its colour is the average of theirs), and selecting one edits its `BIOMETAG=` cases. Songs added to a tag play in every biome the tag contains, and show up for those biomes on the Biomes map.
 - `forceStopMusicOn*` and `forceStartMusicOnValid` (with `forceChance`) are modelled: a forced start is armed when its entry becomes valid and plays when the music stops (naturally, via Next, or by a force stop).
 - Simplifications: songs play in list order (the mod may pick randomly), `musicDelayLength` silences are ignored, and the biome -> `BIOMETAG` table is built in and approximate. Entries that depend on facts the simulator cannot know are reported instead of silently hidden.
+
+### Editing a biome from the map
+
+Click a biome (right-click also selects it) and the third column lists every case that applies to it: each entry with a matching `BIOME=`, plus entries that reach the biome through a `BIOMETAG=` or a broader soft `BIOME=` name. The panel says how each one matches.
+
+- **+ Add case** creates a new entry for the biome. **Remove case** deletes one, and warns first when the case comes from a tag or a broader name, because removing it affects other biomes too.
+- Each case has the time / weather / height / ... checkboxes (with their own OR/AND setting), a **song pool** (pick from the loaded music folder or any song already in the pack) and **allowFallback**.
+- Selecting a case highlights its songs in the playlist and tells you whether it is reachable under the current conditions or blocked by an entry above it.
+- Everything here edits the same entries as Music & Conditions, so both tabs always agree. Conditions the panel does not show (several biomes, dimensions, nearby blocks, custom conditions, forceStop/forceChance) are left untouched; **Open full editor…** jumps to them.
+- On the **Biome tags** map the same panel edits `BIOMETAG=` cases. A song added to a tag plays in every biome the tag contains without being copied onto each biome, and it shows up for those biomes on the Biomes map.
 
 ## Installing the finished songpack in Minecraft
 
@@ -234,6 +281,19 @@ Launch Minecraft with ReactiveMusic installed and use:
 ```
 
 to open the songpack menu and select your songpack.
+
+## Previewing and editing audio
+
+- **Preview song / Stop** under the song list play the selected song's file (the music folder must be loaded). The Simulation Map's playlist and the audio editor share the same player, so only one of them plays at a time.
+- **Edit audio…** (Music & Conditions, one song selected) opens a waveform editor. Drag the handles, drag anywhere on the waveform to select a new region, or type start/end times (`12.5` or `1:23.400`). **Play selection** previews only the kept part, at a preview volume that is never written into the file.
+- **Save as New…** writes the selection to a new file and offers to add it to the songpack when it lands in the loaded music folder. **Replace original…** overwrites the source after confirmation. Files are written to a temporary file first, so a failed save never leaves a half-written track. Re-saving an mp3/ogg re-encodes it, which loses a little quality.
+- Decoding and encoding use `soundfile`, whose wheels bundle mp3/ogg/wav/flac support, so no ffmpeg is needed.
+
+## Editor settings and session restore
+
+The **Settings** tab holds editor-wide preferences (stored in `~/.rm-songpack-maker/settings.json`, so they apply to every songpack): dark/light theme and double-click-to-preview. It also lists every biome and biome tag with its display colour. Colour changes are saved with the current songpack (`biome_customization.json`), and a tag without a colour of its own uses the average of its biomes' colours.
+
+The editor remembers the last songpack you loaded or saved and reopens it on the **Simulation Map** at startup. If that folder is gone or no longer holds a valid songpack, the editor starts with an empty one instead.
 
 ## Testing and debugging
 
@@ -267,6 +327,10 @@ The second command is useful when configuring nearby-block conditions.
 The underlying ReactiveMusic format is YAML, so indentation and structure matter. The editor handles YAML generation for you, but manually editing the generated file should be done carefully.
 
 For the full ReactiveMusic songpack format, see the official [Making Songpacks documentation](https://github.com/CircuitLord/ReactiveMusic/blob/master/docs/MAKING_SONGPACKS.md).
+
+## For contributors
+
+[ARCHITECTURE.md](ARCHITECTURE.md) explains how the code is laid out (one `Songpack.entries` list that every tab views differently, the shared condition model, the simulator engine) and which files to open for a given task. Its Tests section says how to run the regression tests, which need no GUI.
 
 ## License and credits
 

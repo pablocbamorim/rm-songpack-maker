@@ -216,6 +216,32 @@ def biome_case_via_soft(entry: Entry, biome_name: str) -> Optional[str]:
     return softs[0]
 
 
+def situation_specificity(entry: Entry) -> int:
+    """How many AND'd requirements of the entry are about the *situation*
+    rather than the *place*: clauses without any BIOME=/BIOMETAG= atom (time,
+    weather, world height, DIM=, BLOCK=, ...). Between two cases of the same
+    biome the place part is identical, so this is what tells "forest" (0) from
+    "forest & NIGHT" (1) and "forest & NIGHT & RAIN" (2).
+    """
+    place = (conditions.KIND_BIOME, conditions.KIND_BIOMETAG)
+    return sum(
+        1 for clause in condition_logic.entry_clauses(entry)
+        if not any(atom.kind in place for atom in clause))
+
+
+def best_matching_cases(cases: List[Entry]) -> List[Entry]:
+    """Of ``cases`` that are all valid in the simulated situation, the ones
+    that were written for it most precisely (highest situation_specificity;
+    ties are all kept, in the order given). This is "the case for this set of
+    conditions" the simulator focuses on: the less specific valid cases are
+    what the mod only reaches when the specific ones fall through.
+    """
+    if not cases:
+        return []
+    best = max(situation_specificity(e) for e in cases)
+    return [e for e in cases if situation_specificity(e) == best]
+
+
 def add_biome_case(pack: Songpack, biome_name: str,
                    is_tag: bool = False) -> Entry:
     """Create a new, empty case (just the ``BIOME=`` -- or, with

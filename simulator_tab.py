@@ -27,6 +27,15 @@ biome of that tag" (simulation.make_tag_state) and the editor edits BIOMETAG=
 cases; since the simulator resolves tags through the same membership table,
 songs added to a tag also show up on each biome the tag contains.
 
+"Focus on the case matching this situation" (a switch above the list, on by
+default): the list is limited to the biome's / tag's own cases that are valid
+under the simulated conditions and were written most precisely for them
+(case_grouping.best_matching_cases), plus whichever case the editor has open,
+and the embedded editor opens the tab of that case. It is a VIEW filter only:
+rows keep their index in the full plan as their iid, and playback still follows
+the complete mod order (simulation.py), so nothing about fallback chains,
+forceStart/Stop or the playlist changes when it is toggled.
+
 All the mod logic lives in simulation.py; this module is view + playback.
 Playback goes through audio_preview.get_player(), the same shared player the
 song list and the audio editor use.
@@ -45,11 +54,13 @@ import audio_preview
 import biome_case_editor
 import biome_chart
 import biome_customization
+import case_grouping
 import constants as C
 import entry_pools
 import simulation
 import theme
 import yaml_io
+from models import Entry
 
 _BODY = ("", 13)
 _BODY_BOLD = ("", 13, "bold")
@@ -181,6 +192,9 @@ class SimulatorTab(ctk.CTkFrame):
         self._manual_job = None
         self._wave_step = 0
         self._selected_case_id: Optional[str] = None
+        # Focus on the case that matches the simulated conditions (see the
+        # module docstring). Session-only, like the other simulator controls.
+        self.focus_var = tk.BooleanVar(master=self, value=True)
 
         self._more_open = False
         self._extra_vars: Dict[str, tk.BooleanVar] = {}
@@ -349,6 +363,11 @@ class SimulatorTab(ctk.CTkFrame):
             panel, text="", font=_SMALL, anchor="w", justify="left",
             text_color=("gray40", "gray70"), wraplength=360)
         self.mode_label.pack(fill="x", padx=12)
+        ctk.CTkSwitch(
+            panel, text="Focus on the case matching this situation",
+            variable=self.focus_var, font=_SMALL,
+            command=self._on_focus_toggled,
+        ).pack(anchor="w", padx=12, pady=(6, 0))
         self.now_label = ctk.CTkLabel(
             panel, text="Not playing", font=_BODY_BOLD, anchor="w",
             justify="left", wraplength=360)
@@ -818,7 +837,15 @@ class SimulatorTab(ctk.CTkFrame):
         selected_id = (self._view().rep_of.get(self._selected_case_id,
                                                self._selected_case_id)
                        if self._selected_case_id else None)
+        shown = self._focus_positions(biome, plan)
+        hidden = 0
         for i, item in enumerate(plan.items):
+            # Focus only hides rows. The iid stays the index in the FULL plan,
+            # which double-click, playback and the wave animation rely on.
+            if (shown is not None and item.entry_index not in shown
+                    and not shown.intersection(item.also_in)):
+                hidden += 1
+                continue
             playing = self._playlist_active and item.song == self._now_song
             wave = ""
             if playing:
@@ -863,6 +890,16 @@ class SimulatorTab(ctk.CTkFrame):
                 parts.append(
                     "Dimmed = unreachable: an entry above has no allowFallback, "
                     "so it repeats instead of falling through.")
+        if shown is not None and plan.items:
+            noun = kind.lower()
+            if hidden == len(plan.items):
+                parts.append(
+                    f"Focus: no case of this {noun} matches these conditions; "
+                    f"{hidden} song(s) from other entries are hidden.")
+            elif hidden:
+                parts.append(
+                    f"Focus: showing the best-matching case; {hidden} song(s) from "
+                    "other entries are hidden (playback still follows the full order).")
         if selected_id:
             selected = next(
                 (it for it in plan.items if it.entry_id == selected_id),
@@ -890,6 +927,57 @@ class SimulatorTab(ctk.CTkFrame):
                 + ". List them under More conditions to test them.")
         self.legend_label.configure(text="  ".join(parts))
 
+    # ------------------------------------------------------------------
+    # focus: the case that matches the simulated conditions
+    # ------------------------------------------------------------------
+    def _focus_cases(self, subject: str) -> List[Entry]:
+        """The subject's own real entries that are valid under the simulated
+        conditions and the most specific of those (best_matching_cases): "the
+        case for this set of conditions". Validity is read from the same plan
+        the list shows, so the two cannot disagree.
+        """
+        _kind, name = self._describe(subject)
+        view = self._view()
+        valid_ids = self._plan_for(subject).valid_ids
+        valid = [e for e in case_grouping.biome_cases(
+                     self.app.pack, name, self._is_tag_subject(subject))
+                 if view.rep_of.get(e.id) in valid_ids]
+        return case_grouping.best_matching_cases(valid)
+
+    def _focus_positions(self, subject: str,
+                         plan: simulation.Plan) -> Optional[Set[int]]:
+        """Priority numbers of the entries the list is limited to, or None
+        when focus is off. The case open in the editor is included (when it is
+        valid here) so picking another case tab shows its songs too.
+        """
+        if not self.focus_var.get():
+            return None
+        view = self._view()
+        reps = {view.rep_of.get(e.id, e.id) for e in self._focus_cases(subject)}
+        selected = (view.rep_of.get(self._selected_case_id)
+                    if self._selected_case_id else None)
+        if selected in plan.valid_ids:
+            reps.add(selected)
+        return {view.positions[r] for r in reps if r in view.positions}
+
+    def _sync_editor_case(self) -> None:
+        """Open the editor on the case matching the simulated conditions.
+        Only when a subject is pinned (that is when the editor exists) and
+        only on a change of conditions / subject, never on a plain pack edit,
+        so the tab does not jump while the user is editing it.
+        """
+        panel = self.editor_panel
+        subject = self._pinned
+        if panel is None or not subject or not self.focus_var.get():
+            return
+        cases = self._focus_cases(subject)
+        if cases:
+            panel.show_case_for([c.id for c in cases])
+
+    def _on_focus_toggled(self) -> None:
+        self._sync_editor_case()
+        self._refresh_panel()
+
     def _on_case_selected(self, entry_id: str) -> None:
         """Highlight the selected case in column 2 without changing the
         simulated conditions behind the user's back.
@@ -901,6 +989,7 @@ class SimulatorTab(ctk.CTkFrame):
     # context changes (conditions or biome moved)
     # ------------------------------------------------------------------
     def _context_changed(self) -> None:
+        self._sync_editor_case()
         if self._playlist_active and self._play_biome:
             view = self._view()
             plan = self._plan_for(self._play_biome)

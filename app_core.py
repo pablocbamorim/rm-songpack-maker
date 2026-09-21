@@ -642,6 +642,9 @@ class LibraryTab(ctk.CTkFrame):
         "Nether": "minecraft:the_nether",
         "End": "minecraft:the_end",
     }
+    # Biome Map mode selector: the same chart shows biomes or biome tags.
+    _CHART_MODE_BIOMES = "Biomes"
+    _CHART_MODE_TAGS = "Biome tags"
 
     def __init__(self, parent, app: "App"):
         super().__init__(parent, fg_color="transparent")
@@ -674,6 +677,7 @@ class LibraryTab(ctk.CTkFrame):
         # entry is selected, before _clear_editor() has ever run.
         self._biome_map_collapsed = False
         self._biome_map_dimension = "All"
+        self._biome_map_mode = "biomes"      # "biomes" | "tags"
         self.biome_map = None
         self.biome_map_container = None
 
@@ -1143,6 +1147,7 @@ class LibraryTab(ctk.CTkFrame):
         # back open after they've collapsed it.
         self._biome_map_collapsed = False
         self._biome_map_dimension = "All"
+        self._biome_map_mode = "biomes"
         for w in self.editor_frame.winfo_children():
             w.destroy()
         ctk.CTkLabel(
@@ -1705,6 +1710,12 @@ class LibraryTab(ctk.CTkFrame):
         entry -- the same list the Biome section below edits -- and the
         OR/AND selector here drives the same ``biome_combine`` setting.
 
+        A Biomes / Biome tags selector sits above them. In tag mode the same
+        chart draws one icon per biome tag (placed at the average
+        temperature/humidity of its biomes, see
+        biome_customization.tag_attributes) and a click toggles a BIOMETAG=
+        condition on the entry instead of a BIOME= one.
+
         Two view controls sit in the header row:
 
           * a Dimension selector that restricts the chart to biomes that
@@ -1716,9 +1727,21 @@ class LibraryTab(ctk.CTkFrame):
         body = _section(self.editor_frame,
                         "Biome Map (temperature × humidity)")
 
+        # -- mode row: biome map / biome tag map -------------------------
+        mode_row = _row(body)
+        ctk.CTkLabel(mode_row, text="Map:", font=_BODY).pack(side="left")
+        self.chart_mode_var = tk.StringVar(
+            value=(self._CHART_MODE_TAGS if self._biome_map_mode == "tags"
+                   else self._CHART_MODE_BIOMES))
+        ctk.CTkSegmentedButton(
+            mode_row, values=[self._CHART_MODE_BIOMES, self._CHART_MODE_TAGS],
+            variable=self.chart_mode_var, font=_BODY,
+            command=self._on_chart_mode_changed,
+        ).pack(side="left", padx=8)
+
         # -- header row: OR/AND + dimension + collapse toggle ----------
         row = _row(body)
-        ctk.CTkLabel(row, text="Combine enabled biomes with:",
+        ctk.CTkLabel(row, text="Combine enabled biomes/tags with:",
                      font=_BODY).pack(side="left")
         self.chart_combine_var = tk.StringVar(value=entry.biome_combine)
         ctk.CTkSegmentedButton(
@@ -1761,46 +1784,90 @@ class LibraryTab(ctk.CTkFrame):
             # dimension filter on every call, so the chart re-filters
             # itself on each redraw() without ever being rebuilt.
             biomes=self._chart_biomes,
-            color_of=lambda name: self._biome_color(name, False),
-            active=lambda: self._active_biome_keys(entry),
+            color_of=self._chart_color,
+            active=lambda: self._chart_active(entry),
+            tooltip_lines=self._chart_tooltip_lines,
             on_toggle=lambda name: self._on_chart_toggle(entry, name),
             dark=bool(self.app.settings.get("dark_theme", True)),
             height=460,
         )
         self.biome_map.pack(fill="x", padx=4, pady=(4, 2))
 
-        ctk.CTkLabel(
-            self.biome_map_container,
-            text=("Click a biome to enable/disable it as a BIOME= condition (enabled = ✔). "
-                  "Lobe depth follows erosion and lobe count follows weirdness. Biomes that "
-                  "share exactly the same coordinates are fanned out slightly so each stays "
-                  "clickable. The Dimension filter above limits the map to biomes that spawn "
-                  "in the chosen dimension; custom biomes (which have no dimension recorded) "
-                  "show only under 'All'."),
+        self.biome_map_hint = ctk.CTkLabel(
+            self.biome_map_container, text=self._chart_hint_text(),
             font=_SMALL, text_color=("gray40", "gray70"), justify="left",
             anchor="w", wraplength=620,
-        ).pack(anchor="w", padx=6, pady=(0, 4))
+        )
+        self.biome_map_hint.pack(anchor="w", padx=6, pady=(0, 4))
 
     # -- biome map: data source + view state ---------------------------
     def _chart_biomes(self) -> dict:
         """Data source handed to BiomeChart. Called fresh on every
-        redraw, so switching the dimension selector and calling redraw()
-        is enough to re-filter the map -- no widget rebuild required.
+        redraw, so switching the dimension selector or the Biomes / Biome tags
+        mode and calling redraw() is enough -- no widget rebuild required.
+        Both modes are {name: {temperature, humidity, erosion, weirdness}}.
         """
-        all_attrs = biome_customization.all_attributes(
+        attrs = biome_customization.all_attributes(
             self.app.biome_custom_attributes)
-        label = self.chart_dimension_var.get()
-        if label == "All":
-            return all_attrs
-        wanted = self._CHART_DIMENSION_IDS.get(label)
+        tags_mode = self._biome_map_mode == "tags"
+        if tags_mode:
+            # Averaged over each tag's biomes (custom tags have no biome list
+            # and so no place on the map).
+            attrs = biome_customization.tag_attributes(attrs)
+        wanted = self._CHART_DIMENSION_IDS.get(self.chart_dimension_var.get())
         if not wanted:
-            return all_attrs
+            return attrs
         dimension_of = biome_customization.load_app_dimensions()
-        return {
-            name: attrs
-            for name, attrs in all_attrs.items()
-            if dimension_of.get(name) == wanted
-        }
+        if tags_mode:
+            # A tag belongs to a dimension when any of its biomes does; its
+            # position is unaffected, so icons don't jump when filtering.
+            return {t: a for t, a in attrs.items()
+                    if any(dimension_of.get(b) == wanted
+                           for b in biome_customization.tag_members(t))}
+        return {name: a for name, a in attrs.items()
+                if dimension_of.get(name) == wanted}
+
+    def _chart_color(self, name: str) -> str:
+        return self._biome_color(name, self._biome_map_mode == "tags")
+
+    def _chart_tooltip_lines(self, name: str) -> list:
+        if self._biome_map_mode != "tags":
+            return []
+        count = len(biome_customization.tag_members(name))
+        return [f"contains {count} biome{'' if count == 1 else 's'}"]
+
+    def _chart_hint_text(self) -> str:
+        if self._biome_map_mode == "tags":
+            text = ("Click a biome tag to enable/disable it as a BIOMETAG= condition "
+                    "(enabled = \u2714). Each tag sits at the average temperature/humidity of "
+                    "the biomes it contains, and plays in all of them. The Dimension filter "
+                    "keeps tags that contain at least one biome of that dimension. Custom tags "
+                    "have no biome list, so they are added from the Biome section below. ")
+            version = self.app.effective_mod_version()
+            if not mod_versions.supports(version, "BIOMETAG"):
+                text += (f"{self.WARNING_PREFIX}The target build (Reactive Music {version}) "
+                         f"predates BIOMETAG= (needs {mod_versions.requirement('BIOMETAG')}+): "
+                         "tags already on this case can be removed, new ones are refused.")
+            return text
+        return ("Click a biome to enable/disable it as a BIOME= condition (enabled = \u2714). "
+                "Lobe depth follows erosion and lobe count follows weirdness. Biomes that "
+                "share exactly the same coordinates are fanned out slightly so each stays "
+                "clickable. The Dimension filter above limits the map to biomes that spawn "
+                "in the chosen dimension; custom biomes (which have no dimension recorded) "
+                "show only under 'All'.")
+
+    def _on_chart_mode_changed(self, label: str):
+        """Biomes <-> Biome tags. Redrawn synchronously (unlike the dimension
+        filter): the icons must match the mode before the next mouse move asks
+        the chart for a tooltip.
+        """
+        self._biome_map_mode = "tags" if label == self._CHART_MODE_TAGS else "biomes"
+        hint = getattr(self, "biome_map_hint", None)
+        if hint is not None and hint.winfo_exists():
+            hint.configure(text=self._chart_hint_text())
+        chart = getattr(self, "biome_map", None)
+        if chart is not None and chart.winfo_exists():
+            chart.redraw()
 
     def _on_chart_dimension_changed(self, value: str):
         """The chart's Dimension selector moved: remember the choice and
@@ -1850,7 +1917,57 @@ class LibraryTab(ctk.CTkFrame):
         return {biome_chart.normalize_name(n) for n in names
                 if any(conditions.soft_match(a.value, n) for a in atoms)}
 
+    def _chart_active(self, entry: Entry) -> set:
+        """Icons to draw as enabled for the current map mode."""
+        if self._biome_map_mode == "tags":
+            return self._active_tag_keys(entry)
+        return self._active_biome_keys(entry)
+
+    def _active_tag_keys(self, entry: Entry) -> set:
+        """Tag-map icons to draw as enabled: every tag any BIOMETAG= condition
+        of the entry names (IS_ prefix optional, as in the mod), including
+        conditions living in a verbatim / cross-category item.
+        """
+        wanted = {conditions.normalize_tag(a.value)
+                  for a in condition_logic.entry_atoms(entry)
+                  if a.kind == conditions.KIND_BIOMETAG}
+        if not wanted:
+            return set()
+        tags = biome_customization.tag_attributes(
+            biome_customization.all_attributes(self.app.biome_custom_attributes))
+        return {biome_chart.normalize_name(t) for t in tags
+                if conditions.normalize_tag(t) in wanted}
+
+    def _on_chart_tag_toggle(self, entry: Entry, name: str):
+        """Tag-map click: add/remove a plain BIOMETAG= condition. Mirrors the
+        biome path: a tag matched only inside a verbatim condition is reported
+        instead of duplicated, and adding is refused (removing is not) when the
+        target build predates BIOMETAG=.
+        """
+        key = conditions.normalize_tag(name)
+        matches = [b for b in entry.biomes
+                   if b.is_tag and conditions.normalize_tag(b.value) == key]
+        if matches:
+            entry.biomes = [b for b in entry.biomes if b not in matches]
+        elif biome_chart.normalize_name(name) in self._active_tag_keys(entry):
+            self.app.set_status(
+                f"'{name}' is already matched by a BIOMETAG= inside a custom condition of "
+                "this case. Edit or remove that condition to change it.")
+            return
+        elif not self._supports("BIOMETAG"):
+            self.app.set_status(
+                f"The target build predates BIOMETAG= (needs "
+                f"{mod_versions.requirement('BIOMETAG')}+), so '{name}' was not added.")
+            return
+        else:
+            entry.biomes.append(BiomeCondition(value=name, is_tag=True))
+        self._sync_biome_widgets(entry)
+        self._refresh_after_change(entry, rebuild=False)
+
     def _on_chart_toggle(self, entry: Entry, name: str):
+        if self._biome_map_mode == "tags":
+            self._on_chart_tag_toggle(entry, name)
+            return
         key = biome_chart.normalize_name(name)
         matches = [b for b in entry.biomes
                    if not b.is_tag and biome_chart.normalize_name(b.value) == key]

@@ -36,7 +36,7 @@ syncing:
 
 - **Music & Conditions tab** groups entries by primary song ("cases" of a
   song).
-- **Biome Simulator → select a biome** groups entries by `BIOME=`
+- **Simulation Map → select a biome** groups entries by `BIOME=`
   condition ("cases" of a biome); on the **Biome tags** map it groups them by
   `BIOMETAG=` condition ("cases" of a tag). A tag case is a plain entry — songs
   added to a tag are *not* copied onto its biomes; the entry just matches all of
@@ -85,7 +85,7 @@ file cannot disagree.
 ```
 main.py
   → app.App()            (app.py wraps app_core.App, fixes CTkTabview packing)
-  → app_core.App.__init__()        (loads editor preferences and builds tabs)
+  → app_core.App.__init__()        (theme.install_ctk_theme() runs first, before any CTk widget exists; then loads editor preferences and builds the gradient header and tabs)
   → best-effort last-songpack restore (from app_settings.py)
   → ui_enhancements.install(app)   (adds preview buttons, save verification,
                                      filename sanitization — monkeypatches
@@ -95,12 +95,55 @@ main.py
 ```
 
 On a successful restore, the last opened songpack folder is loaded and the
-window selects **Biome Simulator**. A missing or invalid restore target is
-cleared and startup continues with a fresh songpack.
+window selects **Simulation Map**. A missing or invalid restore target is
+cleared and startup continues with a fresh songpack. `_restore_last_songpack` and
+`action_load_config` each run the same load sequence (`yaml_io.load_songpack` +
+`biome_customization.load`/`load_attributes` + `mod_versions.apply_to_pack`), so
+change one and you must change the other.
 
 `app.py` and `app_core.py` together are "the app" — `app_core.py` has the
 real `App`/tab classes; `app.py` is a thin compatibility shim (historical
 entry point) that also fixes tab-frame packing.
+
+## Tabs and cross-tab refresh hooks
+
+Tab order (as built in `App.__init__`): **Songpack Info · Music & Conditions ·
+Simulation Map · Priority Order · Settings**. The app opens on Simulation Map.
+
+Because every tab is a view over `app.pack.entries`, anything that mutates it from
+outside its own tab must tell the others. The hooks live on `App` (`app_core.py`):
+
+| Hook | Call it when | Refreshes |
+|---|---|---|
+| `refresh_all()` | A whole new pack is in place (New, Load, session restore) | Every tab |
+| `on_entry_conditions_changed(entry)` | One entry's conditions changed in the Music & Conditions editor | Song list, Priority tab |
+| `on_pack_entries_changed()` | Entries were added/removed/edited from somewhere else (the simulator's embedded case editor) | Song list, Priority tab, simulator |
+| `on_target_changed()` | The target Minecraft/mod version moved (Songpack Info) | Condition editor (re-gates unsupported conditions) |
+| `on_biome_colors_changed()` | A colour or custom biome changed in Settings | Condition editor, simulator map |
+| `apply_theme()` | Light/dark was toggled | CTk appearance, ttk styles, simulator chart + tree tags |
+| `focus_entry_in_library(entry_id)` | "Open full editor…" in the case editor | Switches to Music & Conditions and selects the song row |
+
+Switching tabs (`_on_tab_changed`) also pulls the Songpack Info fields into the pack,
+refreshes the priority and song lists, and rebuilds the simulator's cached plans
+when it comes into view. If you add a new place that edits `pack.entries`, call
+`on_pack_entries_changed()` rather than refreshing individual tabs yourself.
+
+## Files a songpack save produces (and who reads them)
+
+Saving and loading are **not symmetrical**: some files are handled inside
+`yaml_io`, others by `App` directly, so a new save/load path has to cover all of them.
+
+| File | Written by | Read by | Notes |
+|---|---|---|---|
+| `ReactiveMusic.yaml` | `yaml_io.save_songpack` | `yaml_io.load_songpack` | The only file ReactiveMusic reads. |
+| `songpack_scopes.json` | `scopes.save`, called from `yaml_io.save_songpack` (deleted when nothing is scoped) | `scopes.apply_to_entries`, called from `yaml_io.load_songpack` | Global/default markers. |
+| `biome_customization.json` | `biome_customization.save`, called from `App.action_save_config` | `biome_customization.load` / `load_attributes`, called from `App.action_load_config` and `_restore_last_songpack` | Custom biome/tag colours and chart attributes. |
+| `songpack_target.json` | `mod_versions.save`, called from `App.action_save_config` | `mod_versions.load` + `apply_to_pack`, from the same load paths | Target Minecraft/mod version and platform. |
+| `~/.rm-songpack-maker/settings.json` | `app_settings.save` | `app_settings.load` | Editor prefs, not songpack data: `dark_theme`, `double_click_preview`, `preview_volume`, `last_songpack_folder`. |
+| `default_biome_colors.json` (bundled) | Nothing at runtime | `biome_customization` (cached) | Read-only from the UI. The `save_app_default_color` / `remove_app_default_color` helpers still exist but no screen calls them. |
+
+`save_songpack` is called with `copy_music_from=None`, so audio is never copied.
+`yaml_io._copy_referenced_music` exists but is not wired to anything yet.
 
 ## Layered file map
 
@@ -136,10 +179,11 @@ entry point) that also fixes tab-frame packing.
 | File | Purpose |
 |---|---|
 | `app_core.py` | **The biggest file.** Defines `App` (main window, menu, tab container) and three of the five tabs directly: `InfoTab` (songpack metadata + target mod build), `LibraryTab` (a.k.a. "Music & Conditions" — the condition editor, by far the most complex UI: fixed-category checkboxes, biome/dimension/block pickers, the Biome Map chart, case tabs, multi-select editing), `PriorityTab` (drag-reorderable priority list). Also has shared layout helpers (`_section`, `_flow_group`, typography constants). |
-| `simulator_tab.py` | Tab 4, "Simulation Map": situation sliders (time/weather/height/underwater + collapsible extra conditions/manual facts) + the map + a playlist that imitates the mod + an embedded case editor, using `simulation.py` for all the actual logic. A selector above the map switches between the **Biomes** map and the **Biome tags** map (one `BiomeChart`, mode-dependent data). Everything below the map works on a *subject*: a biome name, or `"#" + tag`. |
+| `simulator_tab.py` | Tab 3, "Simulation Map" (three persistent columns: map · playlist · embedded case editor; `StepSlider` is its discrete situation slider): situation sliders (time/weather/height/underwater + collapsible extra conditions/manual facts) + the map + a playlist that imitates the mod + an embedded case editor, using `simulation.py` for all the actual logic. A selector above the map switches between the **Biomes** map and the **Biome tags** map (one `BiomeChart`, mode-dependent data). Everything below the map works on a *subject*: a biome name, or `"#" + tag`. |
 | `settings_tab.py` | Tab 5, "Settings": editor-wide preferences (dark theme, double-click preview) and the biome/tag colour list editor (reads/writes via `biome_customization.py`). |
-| `biome_chart.py` | The reusable "Biome Map" canvas widget (icons placed by temperature/humidity, shaped by erosion/weirdness). Used by both `LibraryTab` (editing one entry's biomes) and `simulator_tab.py` (situation preview) — it's handed callables, so it doesn't know about `Entry` or `Songpack` at all. Paints a gradient backdrop plus optional night/underwater/weather layers (`render_backdrop`, Pillow-rendered and cached). |
-| `biome_case_editor.py` | Biome-first editing (as opposed to `LibraryTab`'s song-first editing), using the biome-side grouping in `case_grouping.py`. `BiomeCaseEditorPanel` is the copy embedded in the simulator's third column (with `is_tag=True` it edits the `BIOMETAG=` cases of a tag); `BiomeCaseEditorWindow` is the older standalone popup. Both share their editing methods (see the `setattr` loop at the bottom of the file). |
+| `biome_chart.py` | The reusable "Biome Map" canvas widget (icons placed by temperature/humidity, shaped by erosion/weirdness). Used by both `LibraryTab` (editing one entry's biomes) and `simulator_tab.py` (situation preview) — it's handed callables, so it doesn't know about `Entry` or `Songpack` at all. Paints a gradient backdrop plus optional night/underwater/weather layers (`render_backdrop`, Pillow-rendered and cached). Optional hooks used by the simulator: `on_hover`, `tooltip_lines`, `action_labels`, `on_right_click`, `backdrop`. It has a bottom-right resize grip whose height is remembered in the module-level `_RESIZED_HEIGHT`. |
+| `biome_case_editor.py` | Biome-first editing (as opposed to `LibraryTab`'s song-first editing), using the biome-side grouping in `case_grouping.py`. `BiomeCaseEditorPanel` is the copy embedded in the simulator's third column (with `is_tag=True` it edits the `BIOMETAG=` cases of a tag); `BiomeCaseEditorWindow` is the older standalone popup (`open_biome_case_editor`). Nothing in the UI opens it any more (right-clicking a map icon now just selects it), but it is still where the panel's shared methods are defined and copied from. Both share their editing methods (see the `setattr` loop at the bottom of the file). |
+| `theme.py` | The visual identity (palette sampled from the logo) and the ONE place colours live. `install_ctk_theme()` patches CustomTkinter's theme before the first widget exists. `(light, dark)` tuples and the `NEUTRAL_BUTTON` / `DANGER_BUTTON` / `TAB_*` dicts go straight into CTk widgets; `tree_colors`, `listbox_colors`, `toplevel_bg`, `chart_palette` and `waveform_palette` serve widgets CTk doesn't manage (ttk trees, raw tk listboxes/toplevels/canvases). Also builds the gradient header and window backdrop (`build_header`, `build_background`; Pillow, degrading to solid colours). Imports no GUI library at module level, so it is unit-testable headless (`test_theme.py`). |
 | `app_settings.py` | Editor-wide preferences persisted to `~/.rm-songpack-maker/settings.json` (NOT songpack data), plus the CTk↔ttk theming bridge (ttk.Treeview/Entry/etc. don't follow CustomTkinter's theme automatically). |
 
 ### 5. Audio editing subsystem
@@ -151,7 +195,7 @@ entry point) that also fixes tab-frame packing.
 ### 6. Cross-cutting glue
 | File | Purpose |
 |---|---|
-| `ui_enhancements.py` | `install(app)`: adds the Preview/Stop buttons under the song list, wraps `action_save_config` with a reload-and-verify step, and sanitizes filenames when loading a music folder (with user confirmation). Monkeypatches a few `App` methods after construction — check here if an `app.action_*` method behaves differently than its definition in `app_core.py` suggests. |
+| `ui_enhancements.py` | `install(app)`: adds the Preview/Stop buttons under the song list, wraps `action_save_config` with a reload-and-verify step, and sanitizes filenames when loading a music folder (with user confirmation). It also publishes `app.resolve_entry_audio_path` and `app.action_edit_audio`, which the "Edit audio…" button and `audio_editor` reuse. Monkeypatches a few `App` methods after construction — check here if an `app.action_*` method behaves differently than its definition in `app_core.py` suggests. |
 | `version_ui.py` | Trivial: adds a version label + links to the Help menu. |
 | `main.py` | Entry point; wires the install functions above onto `app.App()`. |
 | `app.py` | Compatibility shim: `from app_core import *`, subclasses `App` only to fix CTkTabview child packing. |
@@ -162,7 +206,8 @@ entry point) that also fixes tab-frame packing.
 | `MAKING_SONGPACKS.md` | **The spec.** Canonical description of the YAML format this whole editor is generating. Read this, not the editor code, to check "is this what ReactiveMusic actually supports?" |
 | `ReactiveMusic.yaml-template.yaml` | A worked example songpack in the documented style — useful to sanity-check `yaml_io.py`'s output format. |
 | `README.md` | User-facing docs: features, how to use the GUI, install instructions. Useful for understanding intended *user* workflow, not implementation. |
-| `requirements.txt` | Runtime deps: PyYAML, pygame, customtkinter, soundfile, numpy. |
+| `assets/` | `SoundpackMaker.ico` (window icon, `main.py`), `SoundpackMaker512.png` (header logo, `theme.py`) and the README screenshots. A missing icon/logo is tolerated (silently skipped). |
+| `requirements.txt` | Runtime deps: PyYAML, pygame, customtkinter, Pillow, soundfile, numpy. |
 
 ## Tests
 
@@ -171,6 +216,12 @@ regression tests in `tests/test_entry_logic.py` cover the fixtures of the entry-
 logic repair plan: round-trip stability of boolean structure, cross-category OR,
 merge/priority consistency, unknown-field preservation, type validation, soft
 matching, version gating, force transitions and save validation.
+
+Two smaller suites live at the repo root: `test_fixes.py` (`priority.is_broader_than`,
+`scopes` detection of biome conditions hidden in verbatim items, `entry_pools`
+positions after scope sorting, `yaml_io` top-level type validation) and
+`test_theme.py` (logo gradient and palette; the gradient tests are skipped without
+Pillow). From the repo root: `python -m unittest test_fixes test_theme -v`.
 
 ## Data flow for common tasks
 
@@ -190,9 +241,29 @@ what fields exist.
 it's long; search for the specific `_build_*_section` method. Shared row/flow
 helpers (`_section`, `_row`, `_flow_group`) live near the top of the file.
 
-**"Biome Simulator behaves wrong":** logic bugs → `simulation.py`. Display/
+**"Simulation Map behaves wrong":** logic bugs → `simulation.py`. Display/
 interaction bugs → `simulator_tab.py`. Both share `biome_chart.py` for the
 map widget itself.
+
+**"Clicking biomes on the Music & Conditions map doesn't add/remove the right condition":**
+`app_core.py::LibraryTab._build_biome_map_section`, `_on_chart_toggle` (adds/removes a
+plain `BIOME=`), `_active_biome_keys` (which icons show a ✔ — reads every atom
+through `conditions.soft_match`, so broader names and verbatim items light up too) and
+`_chart_biomes` (the dimension filter). Drawing itself is `biome_chart.py`.
+
+**"Editing a biome's / tag's cases from the Simulation Map":** the grouping is
+`case_grouping.biome_cases` (`is_tag=True` for tags); the UI is
+`biome_case_editor.BiomeCaseEditorPanel`, created by
+`simulator_tab._show_editor_for` and reporting the selected case back through
+`_on_case_selected`. Edits end in `App.on_pack_entries_changed()`.
+
+**"Colours / dark mode / fonts look wrong":** `theme.py` (tokens and per-toolkit
+helpers), then `App.apply_theme` → `app_settings.apply_ttk_theme` →
+`app_core._configure_ttk_typography`, in that order (see the gotcha below).
+
+**"Session restore / last songpack":** `App._restore_last_songpack`, the
+`last_songpack_folder` key in `app_settings.py`, written by `action_load_config` and
+`action_save_config`.
 
 **"Biome tag map / tag colours / tag membership":** membership lives in
 `default_biome_colors.json` → `biome_tags`; `biome_customization.py` turns it
@@ -259,3 +330,12 @@ bundled `default_biome_colors.json`), don't conflate them.
 - Biome/dimension/block "combine" mode (OR vs AND) is a real per-category,
   per-entry setting (`entry.fixed_combine`, `biome_combine`, etc.), not just
   a display option — see `condition_logic.build_events`.
+- Theming is two layers applied in a fixed order by `App.apply_theme`:
+  `app_settings.apply_ttk_theme` (CTk→ttk bridge; may switch the ttk theme to
+  `clam`, which resets ttk styles) and then `app_core._configure_ttk_typography`
+  (fonts and `theme.tree_colors`). Reversing them loses the fonts/colours.
+  `SettingsTab` still builds its colour list from plain `ttk` widgets.
+- Custom biomes added in the UI get a colour but **no chart attributes**, so they
+  never appear on the maps unless `biome_attributes` is added to
+  `biome_customization.json` by hand (`biome_customization.load_attributes` reads
+  it; nothing in the UI writes it).
