@@ -3540,6 +3540,7 @@ class App(ctk.CTk):
         self.biome_custom_tags = {}
         self.biome_custom_attributes = {}
         self.biome_custom_tag_members = {}
+        self.biome_custom_tag_groups = {}
         simulation.set_custom_tag_members({})
         self.simulator_tab.reset()
         self.refresh_all()
@@ -3567,6 +3568,7 @@ class App(ctk.CTk):
             biomes, tags = biome_customization.load(path)
             attributes = biome_customization.load_attributes(path)
             tag_members = biome_customization.load_tag_members(path)
+            tag_groups_loaded = biome_customization.load_tag_groups(path)
             mod_versions.apply_to_pack(self.pack_data, mod_versions.load(path))
         except Exception as exc:  # noqa: BLE001 - surface any load error to the user
             messagebox.showerror("Load failed", str(exc))
@@ -3575,6 +3577,7 @@ class App(ctk.CTk):
         self.biome_custom_tags = tags
         self.biome_custom_attributes = attributes
         self.biome_custom_tag_members = tag_members
+        self.biome_custom_tag_groups = tag_groups_loaded
         simulation.set_custom_tag_members(tag_members)
         self.current_save_folder = path
         self.settings["last_songpack_folder"] = path
@@ -3681,7 +3684,8 @@ class App(ctk.CTk):
                 self.pack_data, folder, copy_music_from=None)
             biome_customization.save(
                 folder, self.biome_custom_biomes, self.biome_custom_tags,
-                self.biome_custom_attributes, self.biome_custom_tag_members)
+                self.biome_custom_attributes, self.biome_custom_tag_members,
+                self.biome_custom_tag_groups)
             mod_versions.save(folder, self.pack_data)
         except Exception as exc:
             messagebox.showerror("Save failed", str(exc))
