@@ -22,6 +22,7 @@ import biome_customization
 import biome_tag_platforms
 import constants as C
 import simulation
+import theme
 
 
 class SettingsTab(ctk.CTkFrame):
@@ -141,8 +142,162 @@ class SettingsTab(ctk.CTkFrame):
             btns, text="Delete custom",
             command=self._delete_custom,
         ).pack(side="left", padx=2)
+        ttk.Button(
+            btns, text="Biome tag groups…",
+            command=self._open_tag_groups,
+        ).pack(side="left", padx=2)
 
         self.refresh()
+
+    # -- biome tag groups --------------------------------------------------
+    def _open_tag_groups(self):
+        """Edit named bundles of BIOMETAG= conditions stored with this songpack.
+
+        Groups are an editor convenience only. Entries keep ordinary
+        BIOMETAG= conditions, so changing a group definition never rewrites
+        existing entries that previously used it.
+        """
+        groups = self.app.biome_custom_tag_groups
+        tags = biome_customization.all_tag_names(
+            self.app.biome_custom_tag_members,
+            self.app.biome_custom_tags,
+        )
+        tags = list(dict.fromkeys(
+            tags + [tag for members in groups.values() for tag in members]
+        ))
+
+        window = ctk.CTkToplevel(self)
+        window.title("Biome tag groups")
+        window.geometry("720x560")
+        window.transient(self.app)
+        window.after(100, lambda: window.winfo_exists() and window.grab_set())
+
+        body = ctk.CTkFrame(window, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=12, pady=12)
+
+        left = ctk.CTkFrame(body)
+        left.pack(side="left", fill="y", padx=(0, 8))
+        ctk.CTkLabel(
+            left, text="Groups", font=("", 14, "bold")
+        ).pack(anchor="w", padx=10, pady=(8, 4))
+        group_list = tk.Listbox(left, width=24, exportselection=False)
+        group_list.pack(fill="y", expand=True, padx=8, pady=(0, 8))
+
+        right = ctk.CTkFrame(body)
+        right.pack(side="left", fill="both", expand=True)
+
+        name_var = tk.StringVar()
+        ctk.CTkLabel(right, text="Group name:").pack(
+            anchor="w", padx=10, pady=(8, 2))
+        ctk.CTkEntry(
+            right, textvariable=name_var, width=260
+        ).pack(anchor="w", padx=10, pady=(0, 6))
+
+        ctk.CTkLabel(
+            right, text="Biome tags in this group:", anchor="w"
+        ).pack(fill="x", padx=10)
+        tag_frame = ctk.CTkScrollableFrame(right)
+        tag_frame.pack(fill="both", expand=True, padx=8, pady=4)
+
+        tag_vars = {}
+        for tag in sorted(tags, key=str.lower):
+            var = tk.BooleanVar()
+            tag_vars[tag] = var
+            ctk.CTkCheckBox(
+                tag_frame, text=tag, variable=var
+            ).pack(anchor="w", padx=4, pady=1)
+
+        current = {"name": None}
+
+        def reload_list():
+            group_list.delete(0, "end")
+            for name in sorted(groups, key=str.lower):
+                group_list.insert("end", f"{name}  ({len(groups[name])})")
+
+        def load_group(name):
+            current["name"] = name
+            name_var.set(name or "")
+            selected = set(groups.get(name, [])) if name else set()
+            for tag, var in tag_vars.items():
+                var.set(tag in selected)
+
+        def on_select(_event=None):
+            selection = group_list.curselection()
+            if selection:
+                names = sorted(groups, key=str.lower)
+                load_group(names[selection[0]])
+
+        def refresh_after_group_change():
+            reload_list()
+            self.app.on_biome_colors_changed()
+
+        def save_group():
+            name = name_var.get().strip()
+            chosen = [
+                tag for tag in sorted(tag_vars, key=str.lower)
+                if tag_vars[tag].get()
+            ]
+            if not name or not chosen:
+                messagebox.showwarning(
+                    "Biome tag group",
+                    "Give the group a name and select at least one biome tag.",
+                    parent=window,
+                )
+                return
+            old = current["name"]
+            if name != old and name in groups:
+                messagebox.showwarning(
+                    "Biome tag group",
+                    "A group with that name already exists.",
+                    parent=window,
+                )
+                return
+            if old and old != name:
+                groups.pop(old, None)
+            groups[name] = chosen
+            current["name"] = name
+            refresh_after_group_change()
+            self.app.set_status(
+                f"Saved biome tag group '{name}' ({len(chosen)} tags). "
+                "Save the songpack to keep it."
+            )
+
+        def delete_group():
+            name = current["name"]
+            if not name or name not in groups:
+                return
+            if not messagebox.askyesno(
+                "Delete biome tag group",
+                f"Delete the group '{name}'? Existing entries keep their tags.",
+                parent=window,
+            ):
+                return
+            groups.pop(name, None)
+            load_group(None)
+            refresh_after_group_change()
+
+        group_list.bind("<<ListboxSelect>>", on_select)
+
+        buttons = ctk.CTkFrame(right, fg_color="transparent")
+        buttons.pack(fill="x", padx=8, pady=(0, 8))
+        ctk.CTkButton(
+            buttons, text="New", width=80, **theme.NEUTRAL_BUTTON,
+            command=lambda: (
+                group_list.selection_clear(0, "end"),
+                load_group(None),
+            ),
+        ).pack(side="left", padx=4)
+        ctk.CTkButton(
+            buttons, text="Delete", width=90, **theme.DANGER_BUTTON,
+            command=delete_group,
+        ).pack(side="right", padx=4)
+        ctk.CTkButton(
+            buttons, text="Save group", width=110,
+            command=save_group,
+        ).pack(side="right", padx=4)
+
+        window.bind("<Escape>", lambda _e: window.destroy())
+        reload_list()
 
     # -- preference handlers -------------------------------------------------
     def _on_double_click_toggled(self):
