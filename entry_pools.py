@@ -95,6 +95,39 @@ def merge_groups(entries: List[Entry]) -> List[List[Entry]]:
     return groups
 
 
+def expand_song_pools(entries: List[Entry]) -> List[Entry]:
+    """Expand YAML song pools into the editor's one-entry-per-song view.
+
+    ReactiveMusic allows several songs in one YAML entry, but the editor's
+    raw ``entries`` list is intentionally one Entry per song. A loaded pool
+    therefore has to be expanded before a music-folder scan can decide which
+    files are genuinely new; otherwise songs that are only secondary members
+    of a pool look absent from the song list while still making the scan say
+    "added 0".
+
+    The first song keeps the original Entry object and additional songs get a
+    deep copy with a fresh Entry id, preserving conditions, flags, scope and
+    unknown fields without sharing mutable condition state between rows.
+    Saving still merges adjacent equivalent rows back into a YAML song pool.
+    """
+    import copy
+
+    expanded: List[Entry] = []
+    for entry in entries:
+        if not entry.songs:
+            expanded.append(entry)
+            continue
+        songs = list(entry.songs)
+        entry.songs = [songs[0]]
+        expanded.append(entry)
+        for song in songs[1:]:
+            clone = copy.deepcopy(entry)
+            clone.id = Entry().id
+            clone.songs = [song]
+            expanded.append(clone)
+    return expanded
+
+
 def pooled_songs(members: List[Entry]) -> List[str]:
     """Every song of the run, in order, without duplicates."""
     songs: List[str] = []
