@@ -630,6 +630,109 @@ def _summarize_group(entries, max_len: int = 120) -> str:
 
 
 # ---------------------------------------------------------------------------
+# CTk biome condition list
+# ---------------------------------------------------------------------------
+
+
+class _CTkBiomeList(ctk.CTkScrollableFrame):
+    """Small CTk-native replacement for the old raw ``tk.Listbox`` biome list.
+
+    The biome picker can contain a large built-in tag/biome set, especially
+    once custom definitions are added. A fixed-height CTkScrollableFrame keeps
+    that list from making the condition editor grow without bound while still
+    giving each item a normal click target.
+
+    Only the tiny Listbox API used by LibraryTab is exposed here
+    (``insert``, ``delete``, ``curselection``, ``itemconfig`` and
+    ``configure``), so the condition-editing logic stays unchanged.
+    """
+
+    def __init__(self, parent, height: int = 120, **kwargs):
+        super().__init__(parent, height=height, **kwargs)
+        self._items: list[str] = []
+        self._buttons: list[ctk.CTkButton] = []
+        self._selected: int | None = None
+        self._item_colors: list[str | None] = []
+
+    def _rebuild(self) -> None:
+        for button in self._buttons:
+            button.destroy()
+        self._buttons = []
+
+        for index, text in enumerate(self._items):
+            button = ctk.CTkButton(
+                self,
+                text=text,
+                height=28,
+                anchor="w",
+                font=_BODY,
+                corner_radius=5,
+                fg_color=(
+                    theme.TAB_ON[0] if index == self._selected else "transparent"
+                ),
+                hover_color=theme.TAB_ON[1],
+                text_color=(
+                    theme.TAB_ON[2] if index == self._selected
+                    else (self._item_colors[index] or theme.OUTLINE_TEXT)
+                ),
+                command=lambda i=index: self._select(i),
+            )
+            button.pack(fill="x", padx=2, pady=1)
+            self._buttons.append(button)
+
+    def _select(self, index: int) -> None:
+        self._selected = index
+        self._rebuild()
+
+    def insert(self, index, text: str) -> None:
+        if index == "end" or index is None:
+            self._items.append(text)
+            self._item_colors.append(None)
+        else:
+            index = int(index)
+            self._items.insert(index, text)
+            self._item_colors.insert(index, None)
+            if self._selected is not None and index <= self._selected:
+                self._selected += 1
+        self._rebuild()
+
+    def delete(self, first, last=None) -> None:
+        if not self._items:
+            return
+        first = int(first)
+        last = first if last is None or last == "end" else int(last)
+        last = min(last, len(self._items) - 1)
+        if first > last:
+            return
+
+        del self._items[first:last + 1]
+        del self._item_colors[first:last + 1]
+        if self._selected is not None:
+            if first <= self._selected <= last:
+                self._selected = None
+            elif self._selected > last:
+                self._selected -= last - first + 1
+        self._rebuild()
+
+    def curselection(self):
+        return () if self._selected is None else (self._selected,)
+
+    def itemconfig(self, index, **kwargs) -> None:
+        index = int(index)
+        if not 0 <= index < len(self._items):
+            return
+        if "foreground" in kwargs:
+            self._item_colors[index] = kwargs["foreground"]
+        self._rebuild()
+
+    def configure(self, **kwargs):
+        height = kwargs.pop("height", None)
+        if height is not None:
+            super().configure(height=height)
+        if kwargs:
+            super().configure(**kwargs)
+
+# ---------------------------------------------------------------------------
 # Tab 2: Music & Conditions
 # ---------------------------------------------------------------------------
 class LibraryTab(ctk.CTkFrame):
@@ -2090,8 +2193,14 @@ class LibraryTab(ctk.CTkFrame):
 
         listbox_wrap = ctk.CTkFrame(biome_body, corner_radius=6)
         listbox_wrap.pack(fill="x", padx=4, pady=4)
-        self.biome_listbox = self._themed_listbox(
-            listbox_wrap, height=min(4, max(2, len(entry.biomes))))
+        # Keep this list compact even when an entry contains many biomes/tags.
+        # CTkScrollableFrame provides the scrollbar and keeps the condition
+        # editor itself from growing indefinitely.
+        self.biome_listbox = _CTkBiomeList(
+            listbox_wrap,
+            height=120,
+            fg_color="transparent",
+        )
         self.biome_listbox.pack(fill="x", padx=2, pady=2)
         for index, b in enumerate(entry.biomes):
             self.biome_listbox.insert(
