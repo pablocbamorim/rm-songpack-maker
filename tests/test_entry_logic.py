@@ -124,6 +124,33 @@ class EventRoundTrip(unittest.TestCase):
         self.assertEqual(entry.custom_raw_conditions, [])
 
 
+class BiomeTagPickerSource(unittest.TestCase):
+    """The condition picker and Biome Tag map must share the bundled tag source."""
+
+    def test_all_map_tags_are_available_from_the_canonical_source(self):
+        from biome_customization import all_tag_names, load_app_tag_members
+
+        members = load_app_tag_members()
+        names = all_tag_names()
+        self.assertEqual(set(members), set(names))
+        # Empty membership is intentional: the tag remains a valid BIOMETAG=
+        # target even when the editor has no known biome carrying it.
+        empty_tags = {tag for tag, biomes in members.items() if not biomes}
+        self.assertTrue(empty_tags)
+        self.assertIn("IS_MAGICAL", empty_tags)
+
+    def test_custom_tag_names_are_kept(self):
+        from biome_customization import all_tag_names
+
+        names = all_tag_names(
+            {"MY_CUSTOM_TAG": ["my_biome"]},
+            {"MY_COLOR_ONLY_TAG": "#123456"},
+        )
+        self.assertIn("MY_CUSTOM_TAG", names)
+        self.assertIn("MY_COLOR_ONLY_TAG", names)
+
+
+
 class CustomBiomeTagMembership(unittest.TestCase):
     """Custom-biome tag additions are persisted and used by BIOMETAG=."""
 
