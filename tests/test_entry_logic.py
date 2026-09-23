@@ -415,6 +415,13 @@ class SongPools(unittest.TestCase):
         self.assertTrue(new_entries[1].has_any_condition())
         self.assertFalse(new_entries[2].has_any_condition())
 
+    def test_duplicate_pool_songs_are_preserved(self):
+        pool = entry_of(["DAY"], ["A", "A", "B"])
+        saved = yaml_io.songpack_to_dict(Songpack(entries=[pool]))["entries"]
+        self.assertEqual(saved[0]["songs"], ["A", "A", "B"])
+        roundtripped = roundtrip(Songpack(entries=[pool]))
+        self.assertEqual(roundtripped.entries[0].songs, ["A", "A", "B"])
+
     def test_pool_round_trips_in_order(self):
         pack = load_text('''
             entries:
