@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/pablocbamorim/rm-songpack-maker/releases/tag/v0.2.0.0"><strong>Download for Windows</strong></a>
+  <a href="https://github.com/pablocbamorim/rm-songpack-maker/releases/latest/download/SoundpackMaker-Windows.zip"><strong>Download for Windows</strong></a>
   &nbsp;|&nbsp;
   <a href="https://github.com/pablocbamorim/rm-songpack-maker/releases"><strong>View Releases</strong></a>
 </p>
