@@ -389,7 +389,8 @@ class BiomeCaseEditorWindow(ctk.CTkToplevel):
         detail = ""
         via_tag = case_grouping.biome_case_via_tag(victim, self.biome_name)
         if via_tag:
-            members = biome_customization.tag_members(via_tag)
+            members = biome_customization.tag_members(
+                via_tag, self.app.biome_custom_tag_members)
             scope = (
                 f"\n\nThis case comes from BIOMETAG={via_tag}. Removing it removes "
                 f"the entry from every biome covered by that tag"
