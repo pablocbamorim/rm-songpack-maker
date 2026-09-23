@@ -19,7 +19,9 @@ from tkinter import ttk, colorchooser, messagebox
 import customtkinter as ctk
 
 import biome_customization
+import biome_tag_platforms
 import constants as C
+import simulation
 
 
 class SettingsTab(ctk.CTkFrame):
@@ -54,6 +56,15 @@ class SettingsTab(ctk.CTkFrame):
             text="Use dark theme",
             variable=self.dark_var,
             command=self._on_theme_toggled,
+        ).pack(anchor="w", padx=12, pady=4)
+
+        self.show_empty_tags_var = tk.BooleanVar(
+            value=bool(app.settings.get("show_empty_biome_tags", False)))
+        ctk.CTkSwitch(
+            prefs,
+            text="Show biome tags with no known biomes on the tag map",
+            variable=self.show_empty_tags_var,
+            command=self._on_show_empty_tags_toggled,
         ).pack(anchor="w", padx=12, pady=4)
 
         ctk.CTkLabel(
@@ -151,6 +162,20 @@ class SettingsTab(ctk.CTkFrame):
             "Switched to the %s theme." %
             ("dark" if self.dark_var.get() else "light"))
 
+    def _on_show_empty_tags_toggled(self):
+        self.app.settings["show_empty_biome_tags"] = bool(
+            self.show_empty_tags_var.get())
+        self.app.save_settings()
+        library_chart = getattr(self.app.library_tab, "biome_map", None)
+        if library_chart is not None and library_chart.winfo_exists():
+            library_chart.redraw()
+        simulator_chart = getattr(self.app.simulator_tab, "chart", None)
+        if simulator_chart is not None and simulator_chart.winfo_exists():
+            simulator_chart.redraw()
+        self.app.set_status(
+            "Empty biome tags turned %s on the tag map." %
+            ("on" if self.show_empty_tags_var.get() else "off"))
+
     # -- biome colour list -------------------------------------------------
     def _store(self, is_tag: bool) -> dict:
         return self.app.biome_custom_tags if is_tag else self.app.biome_custom_biomes
@@ -174,7 +199,8 @@ class SettingsTab(ctk.CTkFrame):
                 elif biome_customization.is_bundled_default(name, is_tag):
                     color = biome_customization.default_color(name, is_tag)
                     color_from = "App default"
-                elif is_tag and biome_customization.tag_members(name):
+                elif is_tag and biome_customization.tag_members(
+                        name, self.app.biome_custom_tag_members):
                     # Tags carry a biome list, not a colour: averaged from it.
                     color = self.app.library_tab._biome_color(name, True)
                     color_from = "Avg. of biomes"
@@ -323,6 +349,29 @@ class SettingsTab(ctk.CTkFrame):
         ttk.Button(body, text="Choose…", command=pick).grid(
             row=2, column=2, padx=4, pady=5)
 
+        tag_label = ttk.Label(body, text="Add to tags (optional):")
+        tag_label.grid(row=3, column=0, padx=6, pady=5, sticky="ne")
+        tag_listbox = tk.Listbox(
+            body, selectmode="multiple", height=7, exportselection=False)
+        tag_listbox.grid(
+            row=3, column=1, columnspan=2, padx=2, pady=5, sticky="ew")
+        available_tags = list(dict.fromkeys(
+            [t for t in C.COMMON_BIOME_TAGS
+             if biome_tag_platforms.tag_available(
+                 t, self.app.pack.platform, self.app.pack.minecraft_version)]
+            + sorted(self.app.biome_custom_tags)
+        ))
+        for tag in available_tags:
+            tag_listbox.insert("end", tag)
+
+        def _on_type_changed(*_args):
+            state = "normal" if type_var.get() == "Biome" else "disabled"
+            tag_listbox.configure(state=state)
+            tag_label.configure(state=state)
+
+        type_var.trace_add("write", _on_type_changed)
+        _on_type_changed()
+
         def add():
             name = name_var.get().strip()
             is_tag = type_var.get() == "Biome Tag"
@@ -339,16 +388,32 @@ class SettingsTab(ctk.CTkFrame):
                 messagebox.showwarning(
                     "Custom biome", "Choose a valid text color.", parent=window)
                 return
+            chosen = (
+                [available_tags[i] for i in tag_listbox.curselection()]
+                if not is_tag else []
+            )
             window.destroy()
             self._apply_color(name, is_tag, color)
+            if not is_tag:
+                for tag in chosen:
+                    members = self.app.biome_custom_tag_members.setdefault(tag, [])
+                    if name not in members:
+                        members.append(name)
+                if chosen:
+                    simulation.set_custom_tag_members(
+                        self.app.biome_custom_tag_members)
+            if not is_tag:
+                self.app.mark_dirty()
             self.filter_var.set(name)
+            extra = f" Added to {len(chosen)} tag(s)." if chosen else ""
             self.app.set_status(
-                f"Added custom {'biome tag' if is_tag else 'biome'} '{name}'. "
-                "It is now available in the biome picker; save the songpack to keep it.")
+                f"Added custom {'biome tag' if is_tag else 'biome'} '{name}'."
+                f"{extra} It is now available in the biome picker; save the songpack "
+                "to keep this definition.")
 
         ttk.Button(body, text="Cancel", command=window.destroy).grid(
-            row=3, column=1, padx=4, pady=(8, 0), sticky="e")
+            row=4, column=1, padx=4, pady=(8, 0), sticky="e")
         ttk.Button(body, text="Add", command=add).grid(
-            row=3, column=2, padx=4, pady=(8, 0), sticky="e")
+            row=4, column=2, padx=4, pady=(8, 0), sticky="e")
         window.bind("<Return>", lambda _e: add())
         window.bind("<Escape>", lambda _e: window.destroy())
