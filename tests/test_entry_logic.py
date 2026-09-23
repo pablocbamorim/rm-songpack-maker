@@ -403,6 +403,18 @@ class SongPools(unittest.TestCase):
         saved = yaml_io.songpack_to_dict(Songpack(entries=expanded))["entries"]
         self.assertEqual(saved[0]["songs"], ["Freedom", "WorldUnbound"])
 
+    def test_reconcile_music_folder_expands_pools_and_adds_missing(self):
+        configured = entry_of(["DAY"], ["Configured", "PooledTrack"])
+        new_entries, expanded, added = entry_pools.reconcile_music_folder_entries(
+            [configured], ["Configured", "PooledTrack", "NewTrack"])
+        self.assertEqual(expanded, 1)
+        self.assertEqual(added, 1)
+        self.assertEqual([e.songs for e in new_entries],
+                         [["Configured"], ["PooledTrack"], ["NewTrack"]])
+        self.assertEqual(new_entries[0].id, configured.id)
+        self.assertTrue(new_entries[1].has_any_condition())
+        self.assertFalse(new_entries[2].has_any_condition())
+
     def test_pool_round_trips_in_order(self):
         pack = load_text('''
             entries:
