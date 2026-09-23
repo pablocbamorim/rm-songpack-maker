@@ -1595,33 +1595,32 @@ class LibraryTab(ctk.CTkFrame):
         """Biome/biome-tag options not already added to this entry, so the
         picker doesn't keep offering values that are already selected.
 
-        Biome tags deliberately use the bundled membership table as their
-        built-in source instead of constants.COMMON_BIOME_TAGS. The
-        Biome Map uses that same table, including tags whose membership list
-        is empty: those tags are valid BIOMETAG= targets even when this
-        editor currently knows no biome that carries them. The Settings
-        preference for hiding empty tags belongs to map rendering only and
-        must not make valid condition values disappear from the editor.
+        Biome tags deliberately use biome_customization's canonical tag
+        source instead of constants.COMMON_BIOME_TAGS. The Biome Map uses
+        that same membership table, including tags whose membership list is
+        empty: those tags are valid BIOMETAG= targets even when this editor
+        currently knows no biome that carries them. The Settings preference
+        for hiding empty tags belongs to map rendering only and must not make
+        valid condition values disappear from the editor.
 
-        Custom tag names come from both the songpack's tag-membership
-        additions and its colour overrides, because either can legitimately
-        introduce a tag name that should remain writable here. Platform
-        gating is applied after the complete source list is assembled.
+        Platform gating is applied after the complete source list is
+        assembled, so custom and empty tags follow the same availability
+        rules as bundled tags.
         """
         if is_tag:
-            builtins = list(biome_customization.load_app_tag_members())
             custom_members = self.app.biome_custom_tag_members
             custom_colors = self.app.biome_custom_tags
-            custom = list(custom_members) + [
-                tag for tag in custom_colors if tag not in custom_members
-            ]
+            builtins = biome_customization.all_tag_names(
+                custom_members, custom_colors)
             builtins = [b for b in builtins if self._tag_supported(b)]
-            custom = [c for c in custom if self._tag_supported(c)]
+            custom = []
         else:
             builtins = C.COMMON_BIOMES
             custom = self.app.biome_custom_biomes
         used = {b.value for b in entry.biomes if b.is_tag == is_tag}
         return [v for v in [*builtins, *custom] if v not in used]
+
+
     def _biome_color(self, value: str, is_tag: bool) -> str:
         """Colour for a biome or biome tag. A songpack override wins; a tag
         without one is the average of the colours of the biomes it contains
