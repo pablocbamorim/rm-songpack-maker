@@ -150,6 +150,21 @@ TAG_MEMBERS: Dict[str, Set[str]] = {
 }
 
 _TABLE_CACHE: Optional[Dict[str, Set[str]]] = None
+#: Per-songpack tag-membership additions layered on top of the bundled table.
+_CUSTOM_TAG_MEMBERS: Dict[str, Set[str]] = {}
+
+
+def set_custom_tag_members(custom: Optional[Dict[str, list]]) -> None:
+    """Set the current songpack's custom tag memberships and invalidate the
+    derived tag table so BIOMETAG= matching changes immediately.
+    """
+    global _CUSTOM_TAG_MEMBERS, _TABLE_CACHE
+    _CUSTOM_TAG_MEMBERS = {
+        normalize_tag(tag): {normalize_biome(biome) for biome in biomes}
+        for tag, biomes in (custom or {}).items()
+        if isinstance(biomes, (list, tuple))
+    }
+    _TABLE_CACHE = None
 
 
 def _tag_table() -> Dict[str, Set[str]]:
@@ -166,6 +181,9 @@ def _tag_table() -> Dict[str, Set[str]]:
                 table[normalize_tag(tag)] = {normalize_biome(b) for b in biomes}
         except Exception:  # noqa: BLE001 - a broken data file must not stop the simulator
             pass
+        for tag, biomes in _CUSTOM_TAG_MEMBERS.items():
+            table.setdefault(tag, set())
+            table[tag] |= biomes
         _TABLE_CACHE = table
     return _TABLE_CACHE
 
