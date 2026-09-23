@@ -232,21 +232,32 @@ def _norm_tag(name: str) -> str:
     return text[3:] if text.startswith("IS_") else text
 
 
-def tag_members(name: str) -> list:
-    """The biomes a tag contains, or [] when the tag isn't in the bundled
-    table (custom tags have no membership data).
+def tag_members(name: str, custom: dict | None = None) -> list:
+    """The biomes a tag contains: bundled membership plus any per-songpack
+    additions from the custom-biome tag picker. The IS_ prefix is still
+    optional when looking up either source.
     """
     table = load_app_tag_members()
-    if name in table:
-        return list(table[name])
+    members = list(table.get(name, []))
     key = _norm_tag(name)
-    for tag, biomes in table.items():
-        if _norm_tag(tag) == key:
-            return list(biomes)
-    return []
+    if name not in table:
+        for tag, biomes in table.items():
+            if _norm_tag(tag) == key:
+                members = list(biomes)
+                break
+    if custom:
+        extra = custom.get(name)
+        if extra is None:
+            for tag, biomes in custom.items():
+                if _norm_tag(tag) == key:
+                    extra = biomes
+                    break
+        if extra:
+            members.extend(b for b in extra if b not in members)
+    return members
 
 
-def tag_attributes(biome_attrs: dict, members: dict | None = None) -> dict:
+def tag_attributes(biome_attrs: dict, custom: dict | None = None) -> dict:
     """Chart attributes for every tag, averaged over the biomes it contains.
 
     Returns {tag: {temperature, humidity, erosion, weirdness}}, ready to hand
@@ -273,7 +284,15 @@ def tag_attributes(biome_attrs: dict, members: dict | None = None) -> dict:
     from the Biome Tag map (and, via biome_case_editor's biome-first cases,
     from right-click editing) even though it is a perfectly valid condition.
     """
-    members = load_app_tag_members() if members is None else members
+    members = {tag: list(biomes) for tag, biomes in load_app_tag_members().items()}
+    if custom:
+        for tag, biomes in custom.items():
+            key = next((existing for existing in members
+                        if _norm_tag(existing) == _norm_tag(tag)), None)
+            if key is None:
+                members[tag] = list(biomes)
+            else:
+                members[key].extend(b for b in biomes if b not in members[key])
     result = {}
     for tag, biomes in members.items():
         rows = [biome_attrs[b] for b in biomes if b in biome_attrs]
@@ -300,7 +319,7 @@ def average_color(colors) -> str | None:
     return "#%02x%02x%02x" % tuple(round(sum(ch) / count) for ch in zip(*rgb))
 
 
-def tag_color(name: str, biome_color=None) -> str | None:
+def tag_color(name: str, biome_color=None, custom: dict | None = None) -> str | None:
     """A tag's colour: the average of the colours of the biomes it contains.
 
     `biome_color(biome_name) -> "#rrggbb"` decides what each member's colour
@@ -308,7 +327,7 @@ def tag_color(name: str, biome_color=None) -> str | None:
     its own lookup so a songpack's recoloured biomes are reflected too.
     Returns None for a tag with no known members.
     """
-    members = tag_members(name)
+    members = tag_members(name, custom)
     if not members:
         return None
     pick = biome_color or (lambda biome: default_color(biome, False))
@@ -472,7 +491,22 @@ def load_attributes(folder: str) -> dict:
     return _clean_attribute_map(data.get("biome_attributes", {}))
 
 
-def save(folder: str, biomes: dict, tags: dict, attributes: dict | None = None) -> None:
+def load_tag_members(folder: str) -> dict:
+    """Per-songpack custom tag-membership additions made by the custom-biome
+    dialog. Missing/invalid data just means no additions.
+    """
+    try:
+        with open(os.path.join(folder, CONFIG_FILENAME), encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError, TypeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return _clean_tag_members(data.get("biome_tag_members", {}))
+
+
+def save(folder: str, biomes: dict, tags: dict, attributes: dict | None = None,
+         tag_members: dict | None = None) -> None:
     """Write biome_customization.json into the songpack folder, atomically."""
     os.makedirs(folder, exist_ok=True)
     target = os.path.join(folder, CONFIG_FILENAME)
@@ -489,6 +523,15 @@ def save(folder: str, biomes: dict, tags: dict, attributes: dict | None = None) 
             if attributes:
                 payload["biome_attributes"] = dict(
                     sorted(attributes.items(), key=lambda x: x[0].lower()))
+            if tag_members:
+                cleaned = {
+                    str(tag): sorted(set(bs))
+                    for tag, bs in tag_members.items()
+                    if isinstance(bs, (list, tuple)) and bs
+                }
+                if cleaned:
+                    payload["biome_tag_members"] = dict(
+                        sorted(cleaned.items(), key=lambda x: x[0].lower()))
             json.dump(payload, f, indent=2, ensure_ascii=False)
             f.write("\n")
         os.replace(tmp, target)
