@@ -157,7 +157,7 @@ Saving and loading are **not symmetrical**: some files are handled inside
 |---|---|---|---|
 | `ReactiveMusic.yaml` | `yaml_io.save_songpack` | `yaml_io.load_songpack` | The only file ReactiveMusic reads. |
 | `songpack_scopes.json` | `scopes.save`, called from `yaml_io.save_songpack` (deleted when nothing is scoped) | `scopes.apply_to_entries`, called from `yaml_io.load_songpack` | Global/default markers. |
-| `biome_customization.json` | `biome_customization.save`, called from `App.action_save_config` | `biome_customization.load` / `load_attributes`, called from `App.action_load_config` and `_restore_last_songpack` | Custom biome/tag colours and chart attributes. |
+| `biome_customization.json` | `biome_customization.save`, called from `App.action_save_config` | `biome_customization.load` / `load_attributes` / `load_tag_members`, called from `App.action_load_config` and `_restore_last_songpack` | Custom biome/tag colours and chart attributes, plus `biome_tag_members` additions from the custom-biome tag picker. These memberships are merged into `simulation` via `simulation.set_custom_tag_members()`. |
 | `songpack_target.json` | `mod_versions.save`, called from `App.action_save_config` | `mod_versions.load` + `apply_to_pack`, from the same load paths | Target Minecraft/mod version and platform. |
 | `~/.rm-songpack-maker/settings.json` | `app_settings.save` | `app_settings.load` | Editor prefs, not songpack data: `dark_theme`, `double_click_preview`, `preview_volume`, `last_songpack_folder`. |
 | `default_biome_colors.json` (bundled) | Nothing at runtime | `biome_customization` (cached) | Read-only from the UI. The `save_app_default_color` / `remove_app_default_color` helpers still exist but no screen calls them. |
@@ -344,11 +344,12 @@ bundled `default_biome_colors.json`), don't conflate them.
   lobe count from **`round(average weirdness)`** (so tags only ever have 0, 4 or
   8 lobes — deliberate, see `tag_attributes`). Its colour is the average of its
   biomes' colours unless the songpack overrides it. A tag with an empty (or
-  attribute-less) membership list is **not** dropped from the map: it gets a
-  centred `(0, 0, 0, 0)` icon instead, because `default_biome_colors.json`
-  deliberately keeps compatibility tags like `IS_MAGICAL` at `[]` for mods
-  that populate them later — the tag still has to be clickable so a
-  `BIOMETAG=` condition can be written for it ahead of time.
+  attribute-less) membership list is not dropped by the underlying tag-attribute
+  table: it gets a centred `(0, 0, 0, 0)` icon. The `show_empty_biome_tags`
+  preference hides those entries on both tag maps by default, while a custom
+  biome explicitly added to a tag counts as known membership.
+  `simulation.set_custom_tag_members()` invalidates the tag-table cache so
+  `BIOMETAG=` evaluation sees those additions immediately.
 - The `"#"` prefix on simulator subjects (`"#IS_HOT"`) is what tells a tag from
   a biome in the shared plan cache / pinned / playlist state; it is never
   written anywhere else.
