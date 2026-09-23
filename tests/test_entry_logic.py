@@ -505,6 +505,16 @@ class SaveValidation(unittest.TestCase):
         narrow = entry_of(["BIOME=dark_forest"], ["narrow"])
         self.assertTrue(any("can never play" in m for m in self.messages([broad, narrow])))
 
+    def test_contradictory_time_conditions_are_reported(self):
+        e = entry_of(["DAY", "NIGHT"])
+        msgs = self.messages([e])
+        self.assertTrue(any("mutually exclusive" in m and "DAY + NIGHT" in m for m in msgs))
+
+    def test_sunrise_and_sunset_are_reported(self):
+        e = entry_of(["SUNRISE", "SUNSET"])
+        msgs = self.messages([e])
+        self.assertTrue(any("SUNRISE + SUNSET" in m for m in msgs))
+
     def test_documented_force_flag_combinations_are_not_invented_errors(self):
         e = entry_of(["DAY"], force_stop_on_changed=True, force_stop_on_valid=True,
                      force_stop_on_invalid=True)
