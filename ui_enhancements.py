@@ -97,6 +97,13 @@ def install(app):
             return
         stems = yaml_io.scan_music_folder(folder)
         stems = _translate_music_folder(folder, stems)
+        # A saved YAML entry may contain a song pool. The editor's raw
+        # entry list is one row per song, so expand those pools before comparing
+        # the folder contents; otherwise secondary pool members make the scan
+        # report "added 0" even though those songs are not separate editor rows.
+        before_count = len(app.pack.entries)
+        app.pack.entries = entry_pools.expand_song_pools(app.pack.entries)
+        expanded = len(app.pack.entries) - before_count
         existing = {s for e in app.pack.entries for s in e.songs}
         added = 0
         for stem in stems:
@@ -110,7 +117,8 @@ def install(app):
                 mark_dirty()
         app.refresh_all()
         app.set_status(
-            f"Found {len(stems)} audio file(s), added {added} new blank entries.")
+            f"Found {len(stems)} audio file(s), expanded {expanded} pooled song(s), "
+            f"added {added} new blank entries.")
 
     def save_config():
         original_save()
