@@ -2581,6 +2581,34 @@ class LibraryTab(ctk.CTkFrame):
         ctk.CTkButton(body, text="Choose…", width=90, font=_BODY,
                       command=pick).grid(row=2, column=2, padx=4, pady=5)
 
+        tag_frame = ctk.CTkFrame(body, fg_color="transparent")
+        tag_frame.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(4, 0))
+        ctk.CTkLabel(
+            tag_frame, text="Add to tags (optional):", font=_BODY, anchor="w"
+        ).pack(fill="x")
+        tag_list = ctk.CTkScrollableFrame(tag_frame, height=120)
+        tag_list.pack(fill="x", pady=(2, 0))
+        available_tags = list(dict.fromkeys(
+            [t for t in C.COMMON_BIOME_TAGS if self._tag_supported(t)]
+            + sorted(self.app.biome_custom_tags)
+        ))
+        tag_vars: dict = {}
+        for tag_name in available_tags:
+            var = tk.BooleanVar(value=False)
+            tag_vars[tag_name] = var
+            ctk.CTkCheckBox(
+                tag_list, text=tag_name, variable=var, font=_SMALL
+            ).pack(anchor="w", padx=4, pady=1)
+
+        def _on_type_changed(*_args):
+            if type_var.get() == "Biome Tag":
+                tag_frame.grid_remove()
+            else:
+                tag_frame.grid()
+
+        type_var.trace_add("write", _on_type_changed)
+        _on_type_changed()
+
         def add():
             name = name_var.get().strip()
             is_tag = type_var.get() == "Biome Tag"
@@ -2601,20 +2629,32 @@ class LibraryTab(ctk.CTkFrame):
                     "Custom biome", "Choose a valid text color.", parent=window)
                 return
             custom[name] = color
+            chosen = []
+            if not is_tag:
+                chosen = [tag for tag, var in tag_vars.items() if var.get()]
+                for tag in chosen:
+                    members = self.app.biome_custom_tag_members.setdefault(tag, [])
+                    if name not in members:
+                        members.append(name)
+                if chosen:
+                    simulation.set_custom_tag_members(
+                        self.app.biome_custom_tag_members)
             window.destroy()
             self._build_editor_for(entry)
+            self.app.mark_dirty()
+            extra = f" Added to {len(chosen)} tag(s)." if chosen else ""
             self.app.set_status(
-                f"Added custom {'biome tag' if is_tag else 'biome'} '{name}'. "
-                "Save the songpack to keep this definition."
+                f"Added custom {'biome tag' if is_tag else 'biome'} '{name}'."
+                f"{extra} Save the songpack to keep this definition."
             )
 
         ctk.CTkButton(body, text="Cancel", width=90, font=_BODY,
                       **theme.NEUTRAL_BUTTON,
                       command=window.destroy).grid(
-            row=3, column=1, padx=4, pady=(8, 0), sticky="e")
+            row=4, column=1, padx=4, pady=(8, 0), sticky="e")
         ctk.CTkButton(body, text="Add", width=90, font=_BODY,
                       command=add).grid(
-            row=3, column=2, padx=4, pady=(8, 0), sticky="e")
+            row=4, column=2, padx=4, pady=(8, 0), sticky="e")
         window.bind("<Return>", lambda _e: add())
         window.bind("<Escape>", lambda _e: window.destroy())
 
