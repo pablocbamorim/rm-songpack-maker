@@ -392,8 +392,6 @@ class SettingsTab(ctk.CTkFrame):
                 [available_tags[i] for i in tag_listbox.curselection()]
                 if not is_tag else []
             )
-            window.destroy()
-            self._apply_color(name, is_tag, color)
             if not is_tag:
                 for tag in chosen:
                     members = self.app.biome_custom_tag_members.setdefault(tag, [])
@@ -402,6 +400,8 @@ class SettingsTab(ctk.CTkFrame):
                 if chosen:
                     simulation.set_custom_tag_members(
                         self.app.biome_custom_tag_members)
+            window.destroy()
+            self._apply_color(name, is_tag, color)
             if not is_tag:
                 self.app.mark_dirty()
             self.filter_var.set(name)
