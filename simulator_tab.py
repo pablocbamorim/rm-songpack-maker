@@ -640,7 +640,8 @@ class SimulatorTab(ctk.CTkFrame):
 
     def _tag_dimensions(self, tag: str) -> Set[str]:
         """Every dimension the tag's biomes live in (see make_tag_state)."""
-        members = biome_customization.tag_members(tag)
+        members = biome_customization.tag_members(
+            tag, self.app.biome_custom_tag_members)
         return {self._dimension_of(b) for b in members} or {"minecraft:overworld"}
 
     def _plan_for(self, subject: str) -> simulation.Plan:
@@ -679,10 +680,17 @@ class SimulatorTab(ctk.CTkFrame):
         tags_mode = self._map_mode == "tags"
         if tags_mode:
             # Averaged over each tag's biomes, see tag_attributes().
-            attrs = biome_customization.tag_attributes(attrs)
+            attrs = biome_customization.tag_attributes(
+                attrs, self.app.biome_custom_tag_members)
             attrs = {t: a for t, a in attrs.items()
                      if biome_tag_platforms.tag_available(
                      t, self.app.pack.platform, self.app.pack.minecraft_version)}
+            if not self.app.settings.get("show_empty_biome_tags", False):
+                attrs = {
+                    t: a for t, a in attrs.items()
+                    if biome_customization.tag_members(
+                        t, self.app.biome_custom_tag_members)
+                }
         wanted = self._DIMENSION_IDS.get(self.chart_dimension_var.get())
         if not wanted:
             return attrs
@@ -737,7 +745,8 @@ class SimulatorTab(ctk.CTkFrame):
     def _tooltip_lines(self, name: str) -> List[str]:
         lines: List[str] = []
         if self._map_mode == "tags":
-            count = len(biome_customization.tag_members(name))
+            count = len(biome_customization.tag_members(
+                name, self.app.biome_custom_tag_members))
             lines.append(f"contains {count} biome{'' if count == 1 else 's'}")
         reachable = [i for i in self._plan_for(self._subject(name)).items
                      if i.reachable]
