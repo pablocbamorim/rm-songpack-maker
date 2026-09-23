@@ -124,6 +124,32 @@ class EventRoundTrip(unittest.TestCase):
         self.assertEqual(entry.custom_raw_conditions, [])
 
 
+class CustomBiomeTagMembership(unittest.TestCase):
+    """Custom-biome tag additions are persisted and used by BIOMETAG=."""
+
+    def setUp(self):
+        simulation.set_custom_tag_members({})
+
+    def tearDown(self):
+        simulation.set_custom_tag_members({})
+
+    def test_custom_membership_changes_tag_matching(self):
+        entry = entry_of(["BIOMETAG=IS_MAGICAL"], songs=["Magic"])
+        self.assertEqual(songs_playing([entry], "my_custom_biome"), [])
+        simulation.set_custom_tag_members({"IS_MAGICAL": ["my_custom_biome"]})
+        self.assertEqual(
+            songs_playing([entry], "my_custom_biome"), ["Magic"])
+
+    def test_custom_membership_round_trips_with_sidecar(self):
+        from biome_customization import load_tag_members, save
+
+        with tempfile.TemporaryDirectory() as folder:
+            save(folder, {}, {}, tag_members={"IS_MAGICAL": ["my_custom_biome"]})
+            self.assertEqual(
+                load_tag_members(folder),
+                {"IS_MAGICAL": ["my_custom_biome"]})
+
+
 class CrossCategoryOr(unittest.TestCase):
     """P1: the template's "BIOME=ocean || UNDERWATER" is understood everywhere."""
 
