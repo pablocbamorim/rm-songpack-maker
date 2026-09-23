@@ -35,6 +35,7 @@ import biome_customization
 import biome_chart
 import mod_versions
 import app_settings
+import simulation
 import theme
 import settings_tab
 import simulator_tab
@@ -1431,7 +1432,8 @@ class LibraryTab(ctk.CTkFrame):
             return custom[value]
         if is_tag:
             averaged = biome_customization.tag_color(
-                value, lambda biome: self._biome_color(biome, False))
+                value, lambda biome: self._biome_color(biome, False),
+                self.app.biome_custom_tag_members)
             if averaged:
                 return averaged
         return biome_customization.default_color(value, is_tag)
@@ -1829,8 +1831,15 @@ class LibraryTab(ctk.CTkFrame):
             self.app.biome_custom_attributes)
         tags_mode = self._biome_map_mode == "tags"
         if tags_mode:
-            attrs = biome_customization.tag_attributes(attrs)
+            attrs = biome_customization.tag_attributes(
+                attrs, self.app.biome_custom_tag_members)
             attrs = {t: a for t, a in attrs.items() if self._tag_supported(t)}
+            if not self.app.settings.get("show_empty_biome_tags", False):
+                attrs = {
+                    t: a for t, a in attrs.items()
+                    if biome_customization.tag_members(
+                        t, self.app.biome_custom_tag_members)
+                }
         wanted = self._CHART_DIMENSION_IDS.get(self.chart_dimension_var.get())
         if not wanted:
             return attrs
@@ -1840,7 +1849,8 @@ class LibraryTab(ctk.CTkFrame):
             # position is unaffected, so icons don't jump when filtering.
             return {t: a for t, a in attrs.items()
                     if any(dimension_of.get(b) == wanted
-                           for b in biome_customization.tag_members(t))}
+                           for b in biome_customization.tag_members(
+                               t, self.app.biome_custom_tag_members))}
         return {name: a for name, a in attrs.items()
                 if dimension_of.get(name) == wanted}
 
@@ -1850,7 +1860,8 @@ class LibraryTab(ctk.CTkFrame):
     def _chart_tooltip_lines(self, name: str) -> list:
         if self._biome_map_mode != "tags":
             return []
-        count = len(biome_customization.tag_members(name))
+        count = len(biome_customization.tag_members(
+            name, self.app.biome_custom_tag_members))
         return [f"contains {count} biome{'' if count == 1 else 's'}"]
 
     def _chart_hint_text(self) -> str:
@@ -2875,6 +2886,9 @@ class App(ctk.CTk):
         # Songpack-specific biome chart attributes (custom biomes only; the
         # bundled ones come from default_biome_colors.json).
         self.biome_custom_attributes = {}
+        # Per-songpack additions made by the custom-biome tag picker.
+        self.biome_custom_tag_members = {}
+        simulation.set_custom_tag_members({})
 
         # Unsaved-changes tracking (README "Coming soon" #1). Sits on the
         # App itself, not the Songpack, because it is about the *session*
@@ -2967,6 +2981,7 @@ class App(ctk.CTk):
             self.pack_data = yaml_io.load_songpack(path)
             biomes, tags = biome_customization.load(path)
             attributes = biome_customization.load_attributes(path)
+            tag_members = biome_customization.load_tag_members(path)
             mod_versions.apply_to_pack(self.pack_data, mod_versions.load(path))
         except Exception:
             # The session may refer to a folder that still exists but no
@@ -2979,6 +2994,8 @@ class App(ctk.CTk):
         self.biome_custom_biomes = biomes
         self.biome_custom_tags = tags
         self.biome_custom_attributes = attributes
+        self.biome_custom_tag_members = tag_members
+        simulation.set_custom_tag_members(tag_members)
         self.current_save_folder = path
         music_folder = os.path.join(path, "music")
         self.music_source_folder = music_folder if os.path.isdir(
@@ -3211,6 +3228,8 @@ class App(ctk.CTk):
         self.biome_custom_biomes = {}
         self.biome_custom_tags = {}
         self.biome_custom_attributes = {}
+        self.biome_custom_tag_members = {}
+        simulation.set_custom_tag_members({})
         self.simulator_tab.reset()
         self.refresh_all()
         self.mark_clean()
@@ -3236,6 +3255,7 @@ class App(ctk.CTk):
             # moment the entries exist.
             biomes, tags = biome_customization.load(path)
             attributes = biome_customization.load_attributes(path)
+            tag_members = biome_customization.load_tag_members(path)
             mod_versions.apply_to_pack(self.pack_data, mod_versions.load(path))
         except Exception as exc:  # noqa: BLE001 - surface any load error to the user
             messagebox.showerror("Load failed", str(exc))
@@ -3243,6 +3263,8 @@ class App(ctk.CTk):
         self.biome_custom_biomes = biomes
         self.biome_custom_tags = tags
         self.biome_custom_attributes = attributes
+        self.biome_custom_tag_members = tag_members
+        simulation.set_custom_tag_members(tag_members)
         self.current_save_folder = path
         self.settings["last_songpack_folder"] = path
         self.save_settings()
@@ -3302,7 +3324,7 @@ class App(ctk.CTk):
                 self.pack_data, folder, copy_music_from=None)
             biome_customization.save(
                 folder, self.biome_custom_biomes, self.biome_custom_tags,
-                self.biome_custom_attributes)
+                self.biome_custom_attributes, self.biome_custom_tag_members)
             mod_versions.save(folder, self.pack_data)
         except Exception as exc:
             messagebox.showerror("Save failed", str(exc))
@@ -3347,7 +3369,7 @@ class App(ctk.CTk):
                 self.pack_data, folder, copy_music_from=None)
             biome_customization.save(
                 folder, self.biome_custom_biomes, self.biome_custom_tags,
-                self.biome_custom_attributes)
+                self.biome_custom_attributes, self.biome_custom_tag_members)
             mod_versions.save(folder, self.pack_data)
         except Exception as exc:
             messagebox.showerror("Save failed", str(exc))
