@@ -159,7 +159,7 @@ Saving and loading are **not symmetrical**: some files are handled inside
 | `songpack_scopes.json` | `scopes.save`, called from `yaml_io.save_songpack` (deleted when nothing is scoped) | `scopes.apply_to_entries`, called from `yaml_io.load_songpack` | Global/default markers. |
 | `biome_customization.json` | `biome_customization.save`, called from `App.action_save_config` | `biome_customization.load` / `load_attributes` / `load_tag_members`, called from `App.action_load_config` and `_restore_last_songpack` | Custom biome/tag colours and chart attributes, plus `biome_tag_members` additions from the custom-biome tag picker. These memberships are merged into `simulation` via `simulation.set_custom_tag_members()`. |
 | `songpack_target.json` | `mod_versions.save`, called from `App.action_save_config` | `mod_versions.load` + `apply_to_pack`, from the same load paths | Target Minecraft/mod version and platform. |
-| `~/.rm-songpack-maker/settings.json` | `app_settings.save` | `app_settings.load` | Editor prefs, not songpack data: `dark_theme`, `double_click_preview`, `preview_volume`, `last_songpack_folder`. |
+| `~/.rm-songpack-maker/settings.json` | `app_settings.save` | `app_settings.load` | Editor prefs, not songpack data: `dark_theme`, `double_click_preview`, `preview_volume`, `last_songpack_folder`, `show_empty_biome_tags`. |
 | `default_biome_colors.json` (bundled) | Nothing at runtime | `biome_customization` (cached) | Read-only from the UI. The `save_app_default_color` / `remove_app_default_color` helpers still exist but no screen calls them. |
 
 `save_songpack` is called with `copy_music_from=None`, so audio is never copied.
