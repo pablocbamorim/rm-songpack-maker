@@ -97,12 +97,11 @@ def install(app):
             return
         stems = yaml_io.scan_music_folder(folder)
         stems = _translate_music_folder(folder, stems)
-        existing = {s for e in app.pack.entries for s in e.songs}
-        added = 0
-        for stem in stems:
-            if stem not in existing:
-                app.pack.entries.append(Entry(songs=[stem]))
-                added += 1
+        # Reconcile the folder against the editor's one-entry-per-song
+        # view. This expands any YAML song pools first, then adds genuinely
+        # missing files, so the rule lives in one testable helper.
+        app.pack.entries, expanded, added = entry_pools.reconcile_music_folder_entries(
+            app.pack.entries, stems)
         app.music_source_folder = folder
         if added:
             mark_dirty = getattr(app, "mark_dirty", None)
@@ -110,7 +109,8 @@ def install(app):
                 mark_dirty()
         app.refresh_all()
         app.set_status(
-            f"Found {len(stems)} audio file(s), added {added} new blank entries.")
+            f"Found {len(stems)} audio file(s), expanded {expanded} pooled song(s), "
+            f"added {added} new blank entries.")
 
     def save_config():
         original_save()

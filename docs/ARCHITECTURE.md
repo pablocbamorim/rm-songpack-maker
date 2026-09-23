@@ -79,6 +79,7 @@ songs above the entries between them). `entry_pools.logical_view()` is the pack
 exactly as ReactiveMusic will read it; the simulator, the blocker check and
 save verification all use it, never the raw list, so a prediction and the saved
 file cannot disagree.
+When a YAML entry contains multiple songs, `entry_pools.expand_song_pools()` restores the editor's one-Entry-per-song view before a music-folder scan. `entry_pools.reconcile_music_folder_entries()` then adds only genuinely missing audio stems; save-time `merge_equivalent_entries()` can still collapse adjacent equivalent rows back into a YAML song pool.
 
 ## Startup chain
 
@@ -255,6 +256,8 @@ it).
 **"Saving/loading is wrong":** `yaml_io.py` is the whole story (load_songpack,
 save_songpack, songpack_to_dict, merge_equivalent_entries). `models.py` for
 what fields exist.
+
+**"Loading a music folder after loading a config":** `yaml_io.scan_music_folder()` finds the audio stems; `entry_pools.reconcile_music_folder_entries()` expands any YAML song pools into the editor's one-song-per-entry view and appends blank entries for stems that are not already represented. Both `app_core.py`'s fallback action and `ui_enhancements.py`'s installed action call that shared helper so their reconciliation rules cannot drift.
 
 **"The condition editor UI needs a change":** `app_core.py`'s `LibraryTab` —
 it's long; search for the specific `_build_*_section` method. Shared row/flow

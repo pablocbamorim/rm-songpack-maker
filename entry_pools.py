@@ -95,6 +95,63 @@ def merge_groups(entries: List[Entry]) -> List[List[Entry]]:
     return groups
 
 
+def expand_song_pools(entries: List[Entry]) -> List[Entry]:
+    """Expand YAML song pools into the editor's one-entry-per-song view.
+
+    ReactiveMusic allows several songs in one YAML entry, but the editor's
+    raw ``entries`` list is intentionally one Entry per song. A loaded pool
+    therefore has to be expanded before a music-folder scan can decide which
+    files are genuinely new; otherwise songs that are only secondary members
+    of a pool look absent from the song list while still making the scan say
+    "added 0".
+
+    The first song keeps the original Entry object and additional songs get a
+    deep copy with a fresh Entry id, preserving conditions, flags, scope and
+    unknown fields without sharing mutable condition state between rows.
+    Saving still merges adjacent equivalent rows back into a YAML song pool.
+    """
+    import copy
+
+    expanded: List[Entry] = []
+    for entry in entries:
+        if not entry.songs:
+            expanded.append(entry)
+            continue
+        songs = list(entry.songs)
+        entry.songs = [songs[0]]
+        expanded.append(entry)
+        for song in songs[1:]:
+            clone = copy.deepcopy(entry)
+            clone.id = Entry().id
+            clone.songs = [song]
+            expanded.append(clone)
+    return expanded
+
+
+def reconcile_music_folder_entries(entries: List[Entry], stems: List[str]) -> tuple[List[Entry], int, int]:
+    """Reconcile scanned audio stems with the editor's one-entry-per-song view.
+
+    ``entries`` may contain YAML song pools because a loaded file represents
+    the mod's format, where one entry can hold several songs. Expand those
+    pools first, then add exactly one blank entry for every scanned stem that
+    is not represented. Existing conditions and flags are never replaced.
+
+    Returns ``(entries, expanded_count, added_count)`` so the UI can report
+    what changed without duplicating the reconciliation rules in callbacks.
+    """
+    before_count = len(entries)
+    reconciled = expand_song_pools(entries)
+    expanded = len(reconciled) - before_count
+    existing = {song for entry in reconciled for song in entry.songs}
+    added = 0
+    for stem in stems:
+        if stem not in existing:
+            reconciled.append(Entry(songs=[stem]))
+            existing.add(stem)
+            added += 1
+    return reconciled, expanded, added
+
+
 def pooled_songs(members: List[Entry]) -> List[str]:
     """Every song of the run, in order, without duplicates."""
     songs: List[str] = []

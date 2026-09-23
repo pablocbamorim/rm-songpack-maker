@@ -391,6 +391,30 @@ class SongPools(unittest.TestCase):
         self.assertEqual(case_grouping.pool_songs([pool]), ["Freedom", "WorldUnbound"])
         self.assertEqual(list(case_grouping.secondary_songs(entries)), ["WorldUnbound"])
 
+    def test_expand_song_pools_restores_one_entry_per_song_view(self):
+        pool = entry_of(["DAY"], ["Freedom", "WorldUnbound"])
+        pool.allow_fallback = True
+        pool.extra_fields = {"alwaysPlay": True}
+        expanded = entry_pools.expand_song_pools([pool])
+        self.assertEqual([e.songs for e in expanded], [["Freedom"], ["WorldUnbound"]])
+        self.assertTrue(all(e.allow_fallback for e in expanded))
+        self.assertTrue(all(e.extra_fields == {"alwaysPlay": True} for e in expanded))
+        self.assertNotEqual(expanded[0].id, expanded[1].id)
+        saved = yaml_io.songpack_to_dict(Songpack(entries=expanded))["entries"]
+        self.assertEqual(saved[0]["songs"], ["Freedom", "WorldUnbound"])
+
+    def test_reconcile_music_folder_expands_pools_and_adds_missing(self):
+        configured = entry_of(["DAY"], ["Configured", "PooledTrack"])
+        new_entries, expanded, added = entry_pools.reconcile_music_folder_entries(
+            [configured], ["Configured", "PooledTrack", "NewTrack"])
+        self.assertEqual(expanded, 1)
+        self.assertEqual(added, 1)
+        self.assertEqual([e.songs for e in new_entries],
+                         [["Configured"], ["PooledTrack"], ["NewTrack"]])
+        self.assertEqual(new_entries[0].id, configured.id)
+        self.assertTrue(new_entries[1].has_any_condition())
+        self.assertFalse(new_entries[2].has_any_condition())
+
     def test_pool_round_trips_in_order(self):
         pack = load_text('''
             entries:
