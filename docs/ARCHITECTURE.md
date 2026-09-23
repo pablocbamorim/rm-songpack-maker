@@ -343,7 +343,12 @@ bundled `default_biome_colors.json`), don't conflate them.
   average temperature/humidity of its biomes, lobe depth = average erosion,
   lobe count from **`round(average weirdness)`** (so tags only ever have 0, 4 or
   8 lobes — deliberate, see `tag_attributes`). Its colour is the average of its
-  biomes' colours unless the songpack overrides it.
+  biomes' colours unless the songpack overrides it. A tag with an empty (or
+  attribute-less) membership list is **not** dropped from the map: it gets a
+  centred `(0, 0, 0, 0)` icon instead, because `default_biome_colors.json`
+  deliberately keeps compatibility tags like `IS_MAGICAL` at `[]` for mods
+  that populate them later — the tag still has to be clickable so a
+  `BIOMETAG=` condition can be written for it ahead of time.
 - The `"#"` prefix on simulator subjects (`"#IS_HOT"`) is what tells a tag from
   a biome in the shared plan cache / pinned / playlist state; it is never
   written anywhere else.

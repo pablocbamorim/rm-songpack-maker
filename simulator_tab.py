@@ -59,6 +59,7 @@ import constants as C
 import entry_pools
 import simulation
 import theme
+import biome_tag_platforms
 import yaml_io
 from models import Entry
 
@@ -402,7 +403,8 @@ class SimulatorTab(ctk.CTkFrame):
             self.tree.column(key, width=width, anchor=anchor, stretch=stretch)
         self.tree.tag_configure("dim", foreground="gray50")
         self._style_tree_tags()
-        scroll = ttk.Scrollbar(tree_wrap, orient="vertical", command=self.tree.yview)
+        scroll = ttk.Scrollbar(
+            tree_wrap, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scroll.set)
         scroll.pack(side="right", fill="y")
         self.tree.pack(side="left", fill="both", expand=True)
@@ -678,6 +680,9 @@ class SimulatorTab(ctk.CTkFrame):
         if tags_mode:
             # Averaged over each tag's biomes, see tag_attributes().
             attrs = biome_customization.tag_attributes(attrs)
+            attrs = {t: a for t, a in attrs.items()
+                     if biome_tag_platforms.tag_available(
+                     t, self.app.pack.platform, self.app.pack.minecraft_version)}
         wanted = self._DIMENSION_IDS.get(self.chart_dimension_var.get())
         if not wanted:
             return attrs
@@ -703,7 +708,8 @@ class SimulatorTab(ctk.CTkFrame):
             night = 0.5
         else:
             night = 0.0
-        weather = next((w for w in ("STORM", "RAIN", "SNOW") if w in flags), None)
+        weather = next(
+            (w for w in ("STORM", "RAIN", "SNOW") if w in flags), None)
         return {"night": night, "underwater": "UNDERWATER" in flags,
                 "weather": weather}
 
@@ -817,7 +823,7 @@ class SimulatorTab(ctk.CTkFrame):
             self.title_label.configure(text=f"{noun.capitalize()}: —")
             self.mode_label.configure(
                 text=f"Hover a {noun} on the map to preview the songs that would "
-                     "play there; click it to pin the list.")
+                "play there; click it to pin the list.")
             self.legend_label.configure(text="")
             return
 
@@ -906,9 +912,11 @@ class SimulatorTab(ctk.CTkFrame):
                 None,
             )
             if selected is None:
-                parts.append("Selected case is not part of this situation's plan.")
+                parts.append(
+                    "Selected case is not part of this situation's plan.")
             elif selected.reachable:
-                parts.append("★ Selected case is reachable under the current conditions.")
+                parts.append(
+                    "★ Selected case is reachable under the current conditions.")
             else:
                 parts.append(
                     "★ Selected case matches, but is unreachable because an entry "
@@ -940,8 +948,8 @@ class SimulatorTab(ctk.CTkFrame):
         view = self._view()
         valid_ids = self._plan_for(subject).valid_ids
         valid = [e for e in case_grouping.biome_cases(
-                     self.app.pack, name, self._is_tag_subject(subject))
-                 if view.rep_of.get(e.id) in valid_ids]
+            self.app.pack, name, self._is_tag_subject(subject))
+            if view.rep_of.get(e.id) in valid_ids]
         return case_grouping.best_matching_cases(valid)
 
     def _focus_positions(self, subject: str,
@@ -953,7 +961,8 @@ class SimulatorTab(ctk.CTkFrame):
         if not self.focus_var.get():
             return None
         view = self._view()
-        reps = {view.rep_of.get(e.id, e.id) for e in self._focus_cases(subject)}
+        reps = {view.rep_of.get(e.id, e.id)
+                for e in self._focus_cases(subject)}
         selected = (view.rep_of.get(self._selected_case_id)
                     if self._selected_case_id else None)
         if selected in plan.valid_ids:

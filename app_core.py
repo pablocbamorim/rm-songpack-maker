@@ -40,6 +40,7 @@ import simulator_tab
 import case_grouping
 import scopes
 import pack_validation
+import biome_tag_platforms
 from models import Songpack, Entry, BiomeCondition, DimensionCondition, BlockCondition
 
 
@@ -1412,6 +1413,8 @@ class LibraryTab(ctk.CTkFrame):
         user has defined for this songpack.
         """
         builtins = C.COMMON_BIOME_TAGS if is_tag else C.COMMON_BIOMES
+        if is_tag:
+            builtins = [b for b in builtins if self._tag_supported(b)]
         custom = self.app.biome_custom_tags if is_tag else self.app.biome_custom_biomes
         used = {b.value for b in entry.biomes if b.is_tag == is_tag}
         return [v for v in [*builtins, *custom] if v not in used]
@@ -1447,6 +1450,15 @@ class LibraryTab(ctk.CTkFrame):
         the way until you've told it what you're building for.
         """
         return mod_versions.supports(self.app.effective_mod_version(), feature)
+
+    # add near _supports()/_gate_suffix()
+    def _tag_supported(self, tag: str) -> bool:
+        """Is this BIOMETAG= tag registered on the songpack's target platform?
+        With no platform chosen, or no data for this tag, nothing is filtered --
+        see biome_tag_platforms.py for the philosophy and how to fill in data.
+        """
+        return biome_tag_platforms.tag_available(
+            tag, self.app.pack.platform, self.app.pack.minecraft_version)
 
     @staticmethod
     def _gate_suffix(feature: str) -> str:
@@ -1816,9 +1828,8 @@ class LibraryTab(ctk.CTkFrame):
             self.app.biome_custom_attributes)
         tags_mode = self._biome_map_mode == "tags"
         if tags_mode:
-            # Averaged over each tag's biomes (custom tags have no biome list
-            # and so no place on the map).
             attrs = biome_customization.tag_attributes(attrs)
+            attrs = {t: a for t, a in attrs.items() if self._tag_supported(t)}
         wanted = self._CHART_DIMENSION_IDS.get(self.chart_dimension_var.get())
         if not wanted:
             return attrs
@@ -2934,7 +2945,8 @@ class App(ctk.CTk):
         self.biome_custom_attributes = attributes
         self.current_save_folder = path
         music_folder = os.path.join(path, "music")
-        self.music_source_folder = music_folder if os.path.isdir(music_folder) else None
+        self.music_source_folder = music_folder if os.path.isdir(
+            music_folder) else None
         self.simulator_tab.reset()
         self.refresh_all()
         self.mark_clean()
@@ -3068,7 +3080,8 @@ class App(ctk.CTk):
         self.mark_dirty()
         # Rebuilds the editor for the current selection *and* case tab.
         self.library_tab.rebuild_editor(refresh_bar=False)
-
+        self.settings_tab.refresh()
+        self.simulator_tab.refresh()
         version = self.effective_mod_version()
         problems = mod_versions.validate_pack(self.pack_data, version)
         if not version:

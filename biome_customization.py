@@ -261,17 +261,28 @@ def tag_attributes(biome_attrs: dict, members: dict | None = None) -> dict:
     ends up with 0, 4 or 8 lobes rather than the finer 0..8 a single biome
     can have. To give tags the full range instead, drop the rounding line.
 
-    Members without chart attributes are skipped; a tag none of whose
-    biomes have attributes is left out (there is nowhere to draw it).
+    A tag with no members carrying known chart attributes -- including an
+    EMPTY membership list, which the bundled JSON deliberately keeps for
+    compatibility tags such as "IS_MAGICAL" or "HIDDEN_FROM_LOCATOR_SELECTION"
+    that ship with zero vanilla biomes and only get populated per-modpack --
+    still gets an entry here, centred at (0, 0, 0, 0) rather than being left
+    out. It has to stay visible and clickable: a modpack can add biomes that
+    carry the tag even though this editor has no chart data for them, and
+    the tag map is how a songpack author writes a BIOMETAG= condition for it
+    without typing the name by hand. Dropping the tag here would hide it
+    from the Biome Tag map (and, via biome_case_editor's biome-first cases,
+    from right-click editing) even though it is a perfectly valid condition.
     """
     members = load_app_tag_members() if members is None else members
     result = {}
     for tag, biomes in members.items():
         rows = [biome_attrs[b] for b in biomes if b in biome_attrs]
         if not rows:
+            result[tag] = {key: 0.0 for key in ATTRIBUTE_KEYS}
             continue
         count = len(rows)
-        avg = {key: sum(r[key] for r in rows) / count for key in ATTRIBUTE_KEYS}
+        avg = {key: sum(r[key] for r in rows) /
+               count for key in ATTRIBUTE_KEYS}
         avg["weirdness"] = float(math.floor(avg["weirdness"] + 0.5))
         result[tag] = avg
     return result
