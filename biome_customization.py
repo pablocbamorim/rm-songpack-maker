@@ -224,6 +224,26 @@ def load_app_tag_members(force_reload: bool = False) -> dict:
     return _app_tag_members_cache
 
 
+def all_tag_names(custom_members: dict | None = None,
+                  custom_colors: dict | None = None) -> list:
+    """Return every biome-tag name the editor can offer.
+
+    The bundled membership table is the canonical built-in source because it
+    is also what the Biome Tag map renders. Empty membership lists are kept:
+    they are valid BIOMETAG= targets even when no known biome currently uses
+    them. Per-songpack membership additions and tag colour overrides are
+    appended as custom names so either kind of customization remains writable
+    through the condition editor.
+    """
+    names = list(load_app_tag_members())
+    for source in (custom_members or {}, custom_colors or {}):
+        for name in source:
+            if name not in names:
+                names.append(name)
+    return names
+
+
+
 def _norm_tag(name: str) -> str:
     """'IS_HOT', 'is_hot' and 'HOT' are the same tag (the IS_ prefix is
     optional in ReactiveMusic). Mirrors simulation.normalize_tag.
