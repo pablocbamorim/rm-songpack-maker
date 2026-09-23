@@ -128,6 +128,30 @@ def expand_song_pools(entries: List[Entry]) -> List[Entry]:
     return expanded
 
 
+def reconcile_music_folder_entries(entries: List[Entry], stems: List[str]) -> tuple[List[Entry], int, int]:
+    """Reconcile scanned audio stems with the editor's one-entry-per-song view.
+
+    ``entries`` may contain YAML song pools because a loaded file represents
+    the mod's format, where one entry can hold several songs. Expand those
+    pools first, then add exactly one blank entry for every scanned stem that
+    is not represented. Existing conditions and flags are never replaced.
+
+    Returns ``(entries, expanded_count, added_count)`` so the UI can report
+    what changed without duplicating the reconciliation rules in callbacks.
+    """
+    before_count = len(entries)
+    reconciled = expand_song_pools(entries)
+    expanded = len(reconciled) - before_count
+    existing = {song for entry in reconciled for song in entry.songs}
+    added = 0
+    for stem in stems:
+        if stem not in existing:
+            reconciled.append(Entry(songs=[stem]))
+            existing.add(stem)
+            added += 1
+    return reconciled, expanded, added
+
+
 def pooled_songs(members: List[Entry]) -> List[str]:
     """Every song of the run, in order, without duplicates."""
     songs: List[str] = []
