@@ -97,19 +97,11 @@ def install(app):
             return
         stems = yaml_io.scan_music_folder(folder)
         stems = _translate_music_folder(folder, stems)
-        # A saved YAML entry may contain a song pool. The editor's raw
-        # entry list is one row per song, so expand those pools before comparing
-        # the folder contents; otherwise secondary pool members make the scan
-        # report "added 0" even though those songs are not separate editor rows.
-        before_count = len(app.pack.entries)
-        app.pack.entries = entry_pools.expand_song_pools(app.pack.entries)
-        expanded = len(app.pack.entries) - before_count
-        existing = {s for e in app.pack.entries for s in e.songs}
-        added = 0
-        for stem in stems:
-            if stem not in existing:
-                app.pack.entries.append(Entry(songs=[stem]))
-                added += 1
+        # Reconcile the folder against the editor's one-entry-per-song
+        # view. This expands any YAML song pools first, then adds genuinely
+        # missing files, so the rule lives in one testable helper.
+        app.pack.entries, expanded, added = entry_pools.reconcile_music_folder_entries(
+            app.pack.entries, stems)
         app.music_source_folder = folder
         if added:
             mark_dirty = getattr(app, "mark_dirty", None)
