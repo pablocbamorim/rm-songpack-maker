@@ -3215,18 +3215,17 @@ class App(ctk.CTk):
         if not folder:
             return
         stems = yaml_io.scan_music_folder(folder)
-        existing = {s for e in self.pack_data.entries for s in e.songs}
-        added = 0
-        for stem in stems:
-            if stem not in existing:
-                self.pack_data.entries.append(Entry(songs=[stem]))
-                added += 1
+        self.pack_data.entries, expanded, added = (
+            entry_pools.reconcile_music_folder_entries(
+                self.pack_data.entries, stems)
+        )
         self.music_source_folder = folder
         if added:
             self.mark_dirty()
         self.refresh_all()
         self.set_status(
-            f"Found {len(stems)} audio file(s) in {folder}, added {added} new blank entries. "
+            f"Found {len(stems)} audio file(s) in {folder}, expanded {expanded} "
+            f"pooled song(s), added {added} new blank entries. "
             f"Configure their conditions in the 'Music & Conditions' tab."
         )
 
