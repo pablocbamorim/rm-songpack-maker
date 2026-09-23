@@ -157,7 +157,7 @@ Saving and loading are **not symmetrical**: some files are handled inside
 |---|---|---|---|
 | `ReactiveMusic.yaml` | `yaml_io.save_songpack` | `yaml_io.load_songpack` | The only file ReactiveMusic reads. |
 | `songpack_scopes.json` | `scopes.save`, called from `yaml_io.save_songpack` (deleted when nothing is scoped) | `scopes.apply_to_entries`, called from `yaml_io.load_songpack` | Global/default markers. |
-| `biome_customization.json` | `biome_customization.save`, called from `App.action_save_config` | `biome_customization.load` / `load_attributes` / `load_tag_members`, called from `App.action_load_config` and `_restore_last_songpack` | Custom biome/tag colours and chart attributes, plus `biome_tag_members` additions from the custom-biome tag picker. These memberships are merged into `simulation` via `simulation.set_custom_tag_members()`. |
+| `biome_customization.json` | `biome_customization.save`, called from `App.action_save_config` | `biome_customization.load` / `load_attributes` / `load_tag_members` / `load_tag_groups`, called from `App.action_load_config` and `_restore_last_songpack` | Custom biome/tag colours and chart attributes, plus `biome_tag_members` additions and editor-only `biome_tag_groups`. These memberships are merged into `simulation` via `simulation.set_custom_tag_members()`. |
 | `songpack_target.json` | `mod_versions.save`, called from `App.action_save_config` | `mod_versions.load` + `apply_to_pack`, from the same load paths | Target Minecraft/mod version and platform. |
 | `~/.rm-songpack-maker/settings.json` | `app_settings.save` | `app_settings.load` | Editor prefs, not songpack data: `dark_theme`, `double_click_preview`, `preview_volume`, `last_songpack_folder`, `show_empty_biome_tags`. |
 | `default_biome_colors.json` (bundled) | Nothing at runtime | `biome_customization` (cached) | Read-only from the UI. The `save_app_default_color` / `remove_app_default_color` helpers still exist but no screen calls them. |
@@ -180,12 +180,13 @@ Saving and loading are **not symmetrical**: some files are handled inside
 | `scopes.py` | "Global" / "default" songs. `Entry.scope` is editor-only metadata persisted in `songpack_scopes.json` (keyed by an entry's events + songs, so it survives a YAML round trip). Also the blocker check (`find_blockers`, `enable_fallback_on_blockers`): which entries above a global song stop it being reached in which biomes. No special YAML output: a global/default entry is a plain entry with no `BIOME=`, pinned below normal entries. |
 | `priority.py` | Rarity scoring (`score_entry`) that drives "Auto-arrange by rarity", plus `find_broader_fallbacks` (the "mix into this entry" variety helper). |
 | `mod_versions.py` | Feature-gate table: which ReactiveMusic mod version introduced which condition/flag, Minecraft-version → mod-version lookup, and the `songpack_target.json` sidecar (editor-only metadata, never written into the actual YAML). |
+| `tag_groups.py` | Pure custom biome-tag group logic: derived `applied_groups`, `add_group`, and `remove_group` without storing group state on entries. |
 
 ### 2. Persistence / I/O — read these for load/save behavior
 | File | Purpose |
 |---|---|
 | `yaml_io.py` | Load/save `ReactiveMusic.yaml`. Validates types on load (`SongpackFormatError` lists every problem; nothing is truthiness-coerced and a malformed entries list can no longer load as an empty pack), preserves unknown per-entry and top-level keys (`Entry.extra_fields`, `Songpack.extra_top_level`), writes song pools via `entry_pools`, and matches the mod author's preferred YAML style (quoted strings, indented lists). |
-| `biome_customization.py` | Two *separate* colour/attribute stores: per-songpack overrides (`biome_customization.json` next to a songpack) vs. bundled app defaults (`default_biome_colors.json` next to this script, shipped with the editor). Also owns the biome chart's temperature/humidity/erosion/weirdness attribute data, the bundled **tag membership** (`load_app_tag_members`, `tag_members`), and everything derived from it: a tag's averaged colour (`tag_color`) and averaged chart attributes (`tag_attributes`). |
+| `biome_customization.py` | Two *separate* colour/attribute stores: per-songpack overrides (`biome_customization.json` next to a songpack) vs. bundled app defaults (`default_biome_colors.json` next to this script, shipped with the editor). Also owns the biome chart's temperature/humidity/erosion/weirdness attribute data, the bundled **tag membership** (`load_app_tag_members`, `tag_members`), everything derived from it, and persistence of editor-only `biome_tag_groups`. |
 | `default_biome_colors.json` | The bundled defaults data file itself. Keys: `biomes` (name → colour), `biome_tags` (**tag → list of the biomes it contains** — tags have no colour of their own), `biome_dimensions`, `biome_attributes` (chart data). Rarely needs to be read in full — just know what the keys are. |
 | `audio_io.py` | Pure audio logic (no tkinter): probing, waveform peak extraction, trim/export via `soundfile`+`numpy`. Safe to call from worker threads. |
 | `block_data.py` | Static list of common vanilla block IDs for the nearby-block picker. |
@@ -244,6 +245,8 @@ positions after scope sorting, `yaml_io` top-level type validation) and
 Pillow). From the repo root: `python -m unittest test_fixes test_theme -v`.
 
 ## Data flow for common tasks
+
+**"Custom biome-tag groups need to change":** `tag_groups.py` owns group semantics; `settings_tab.py::_open_tag_groups` edits the per-songpack definitions; `app_core.py::LibraryTab._add_tag_group` / `_remove_tag_group` apply them to ordinary `BIOMETAG=` conditions.
 
 **"A checkbox condition needs to change / a new condition type is needed":**
 `constants.py` (define it) → `condition_logic.py` (build/parse to YAML tokens)
