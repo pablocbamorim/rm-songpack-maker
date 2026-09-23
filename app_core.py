@@ -634,6 +634,86 @@ def _summarize_group(entries, max_len: int = 120) -> str:
 # ---------------------------------------------------------------------------
 
 
+class _CTkBiomePicker(ctk.CTkFrame):
+    """CTk-native picker for the large biome / biome-tag option set.
+
+    CTkComboBox's popup is convenient for short lists, but its long option
+    list is awkward to browse: the user is effectively limited to the
+    popup's arrow navigation. This picker keeps the search field and puts the
+    actual options in a real CTkScrollableFrame, so mouse-wheel/trackpad
+    scrolling works over the list itself.
+
+    The widget deliberately only owns picker presentation. The existing
+    StringVar remains the source of truth and LibraryTab still decides
+    what gets added to an Entry.
+    """
+
+    def __init__(self, parent, variable: tk.StringVar, width: int = 220,
+                 height: int = 150, **kwargs):
+        super().__init__(parent, fg_color="transparent", **kwargs)
+        self.variable = variable
+        self._values: list[str] = []
+        self._buttons: list[ctk.CTkButton] = []
+
+        self.search = ctk.CTkEntry(
+            self, textvariable=variable, width=width, font=_BODY,
+        )
+        self.search.pack(fill="x")
+
+        self.options = _SmoothScrollFrame(
+            self, height=height, width=width,
+            corner_radius=6,
+        )
+        self.options.pack(fill="x", pady=(4, 0))
+        self.variable.trace_add("write", self._on_search_changed)
+
+    def set_values(self, values) -> None:
+        """Replace the available choices and redraw the visible picker."""
+        self._values = list(values)
+        self._redraw()
+
+    def _on_search_changed(self, *_args) -> None:
+        self._redraw()
+
+    def _redraw(self) -> None:
+        for button in self._buttons:
+            button.destroy()
+        self._buttons = []
+
+        needle = self.variable.get().strip().lower()
+        values = [value for value in self._values
+                  if not needle or needle in value.lower()]
+
+        for value in values:
+            button = ctk.CTkButton(
+                self.options,
+                text=value,
+                anchor="w",
+                height=28,
+                font=_SMALL,
+                corner_radius=5,
+                fg_color="transparent",
+                hover_color=theme.TAB_ON[1],
+                text_color=theme.OUTLINE_TEXT,
+                command=lambda selected=value: self._choose(selected),
+            )
+            button.pack(fill="x", padx=2, pady=1)
+            self._buttons.append(button)
+
+    def _choose(self, value: str) -> None:
+        """Put a clicked option into the search field without adding it yet."""
+        self.variable.set(value)
+        self.search.icursor("end")
+
+    def configure(self, **kwargs):
+        """Support the small configure(values=...) API used by the editor."""
+        values = kwargs.pop("values", None)
+        if values is not None:
+            self.set_values(values)
+        if kwargs:
+            super().configure(**kwargs)
+
+
 class _CTkBiomeList(ctk.CTkScrollableFrame):
     """Small CTk-native replacement for the old raw ``tk.Listbox`` biome list.
 
@@ -2149,10 +2229,13 @@ class LibraryTab(ctk.CTkFrame):
         ctk.CTkLabel(row1, text="Biome:", font=_BODY).pack(side="left")
         self.biome_search_var = tk.StringVar()
         self.biome_is_tag_var = tk.BooleanVar(value=False)
-        self.biome_combobox = ctk.CTkComboBox(
+
+        # The picker itself is CTk-native and owns the large scrollable
+        # option list. Unlike CTkComboBox's popup, the list can be browsed
+        # directly with the mouse wheel / trackpad.
+        self.biome_combobox = _CTkBiomePicker(
             row1, variable=self.biome_search_var,
-            values=self._available_biome_values(entry, False),
-            width=220, font=_BODY,
+            width=220, height=150,
         )
         self.biome_combobox.pack(side="left", padx=6)
 
@@ -2179,6 +2262,9 @@ class LibraryTab(ctk.CTkFrame):
         ctk.CTkButton(row1, text="Add custom…", width=110, font=_BODY,
                       command=lambda: self._open_custom_biome_dialog(entry)).pack(
                           side="left", padx=4)
+
+        self.biome_combobox.configure(
+            values=self._available_biome_values(entry, False))
 
         row2 = _row(biome_body)
         ctk.CTkLabel(row2, text="Combine multiple biomes with:",
