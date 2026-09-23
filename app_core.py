@@ -43,6 +43,7 @@ import case_grouping
 import scopes
 import pack_validation
 import biome_tag_platforms
+import tag_groups
 from models import Songpack, Entry, BiomeCondition, DimensionCondition, BlockCondition
 
 
@@ -2283,6 +2284,35 @@ class LibraryTab(ctk.CTkFrame):
         self.biome_combobox.configure(
             values=self._available_biome_values(entry, False))
 
+        # -- custom tag groups ----------------------------------------------
+        row_group = _row(biome_body)
+        ctk.CTkLabel(row_group, text="Tag group:", font=_BODY).pack(side="left")
+        self.tag_group_var = tk.StringVar()
+        self.tag_group_combobox = ctk.CTkComboBox(
+            row_group,
+            variable=self.tag_group_var,
+            values=sorted(self.app.biome_custom_tag_groups, key=str.lower)
+                or ["(define groups in Settings)"],
+            width=220,
+            font=_BODY,
+        )
+        self.tag_group_combobox.pack(side="left", padx=6)
+        group_supported = self._supports("BIOMETAG")
+        add_group_button = ctk.CTkButton(
+            row_group, text="Add group", width=100, font=_BODY,
+            command=lambda: self._add_tag_group(entry),
+        )
+        remove_group_button = ctk.CTkButton(
+            row_group, text="Remove group", width=120, font=_BODY,
+            **theme.NEUTRAL_BUTTON,
+            command=lambda: self._remove_tag_group(entry),
+        )
+        if not group_supported:
+            add_group_button.configure(state="disabled")
+            remove_group_button.configure(state="disabled")
+        add_group_button.pack(side="left", padx=4)
+        remove_group_button.pack(side="left", padx=4)
+
         row2 = _row(biome_body)
         ctk.CTkLabel(row2, text="Combine multiple biomes with:",
                      font=_BODY).pack(side="left")
@@ -2744,6 +2774,32 @@ class LibraryTab(ctk.CTkFrame):
         del entry.biomes[sel[0]]
         self._refresh_after_change(entry, rebuild=True)
 
+    def _add_tag_group(self, entry: Entry):
+        """Add every BIOMETAG condition from the selected custom group."""
+        name = self.tag_group_var.get().strip()
+        groups = self.app.biome_custom_tag_groups
+        if name not in groups:
+            self.app.set_status(
+                "Pick a tag group from Settings > Biome tag groups first.")
+            return
+        added = tag_groups.add_group(entry, groups, name)
+        self.app.set_status(
+            f"Group {name}: added {len(added)} tag(s)." if added
+            else f"Group {name} was already fully applied.")
+        self._refresh_after_change(entry, rebuild=True)
+
+    def _remove_tag_group(self, entry: Entry):
+        """Remove a group while preserving tags required by another applied group."""
+        name = self.tag_group_var.get().strip()
+        groups = self.app.biome_custom_tag_groups
+        if name not in groups:
+            return
+        removed = tag_groups.remove_group(entry, groups, name)
+        self.app.set_status(
+            f"Group {name}: removed {len(removed)} tag(s); "
+            "shared tags required by another applied group were kept.")
+        self._refresh_after_change(entry, rebuild=True)
+
     def _open_custom_biome_dialog(self, entry: Entry):
         """Define a brand-new custom biome or biome tag (with its own text
         color) so it becomes available in the picker above. This does NOT
@@ -3140,6 +3196,7 @@ class App(ctk.CTk):
         self.biome_custom_attributes = {}
         # Per-songpack additions made by the custom-biome tag picker.
         self.biome_custom_tag_members = {}
+        self.biome_custom_tag_groups = {}
         simulation.set_custom_tag_members({})
 
         # Unsaved-changes tracking (README "Coming soon" #1). Sits on the
@@ -3234,6 +3291,7 @@ class App(ctk.CTk):
             biomes, tags = biome_customization.load(path)
             attributes = biome_customization.load_attributes(path)
             tag_members = biome_customization.load_tag_members(path)
+            tag_groups_loaded = biome_customization.load_tag_groups(path)
             mod_versions.apply_to_pack(self.pack_data, mod_versions.load(path))
         except Exception:
             # The session may refer to a folder that still exists but no
@@ -3247,6 +3305,7 @@ class App(ctk.CTk):
         self.biome_custom_tags = tags
         self.biome_custom_attributes = attributes
         self.biome_custom_tag_members = tag_members
+        self.biome_custom_tag_groups = tag_groups_loaded
         simulation.set_custom_tag_members(tag_members)
         self.current_save_folder = path
         music_folder = os.path.join(path, "music")
@@ -3481,6 +3540,7 @@ class App(ctk.CTk):
         self.biome_custom_tags = {}
         self.biome_custom_attributes = {}
         self.biome_custom_tag_members = {}
+        self.biome_custom_tag_groups = {}
         simulation.set_custom_tag_members({})
         self.simulator_tab.reset()
         self.refresh_all()
@@ -3508,6 +3568,7 @@ class App(ctk.CTk):
             biomes, tags = biome_customization.load(path)
             attributes = biome_customization.load_attributes(path)
             tag_members = biome_customization.load_tag_members(path)
+            tag_groups_loaded = biome_customization.load_tag_groups(path)
             mod_versions.apply_to_pack(self.pack_data, mod_versions.load(path))
         except Exception as exc:  # noqa: BLE001 - surface any load error to the user
             messagebox.showerror("Load failed", str(exc))
@@ -3516,6 +3577,7 @@ class App(ctk.CTk):
         self.biome_custom_tags = tags
         self.biome_custom_attributes = attributes
         self.biome_custom_tag_members = tag_members
+        self.biome_custom_tag_groups = tag_groups_loaded
         simulation.set_custom_tag_members(tag_members)
         self.current_save_folder = path
         self.settings["last_songpack_folder"] = path
@@ -3576,7 +3638,8 @@ class App(ctk.CTk):
                 self.pack_data, folder, copy_music_from=None)
             biome_customization.save(
                 folder, self.biome_custom_biomes, self.biome_custom_tags,
-                self.biome_custom_attributes, self.biome_custom_tag_members)
+                self.biome_custom_attributes, self.biome_custom_tag_members,
+                self.biome_custom_tag_groups)
             mod_versions.save(folder, self.pack_data)
         except Exception as exc:
             messagebox.showerror("Save failed", str(exc))
@@ -3621,7 +3684,8 @@ class App(ctk.CTk):
                 self.pack_data, folder, copy_music_from=None)
             biome_customization.save(
                 folder, self.biome_custom_biomes, self.biome_custom_tags,
-                self.biome_custom_attributes, self.biome_custom_tag_members)
+                self.biome_custom_attributes, self.biome_custom_tag_members,
+                self.biome_custom_tag_groups)
             mod_versions.save(folder, self.pack_data)
         except Exception as exc:
             messagebox.showerror("Save failed", str(exc))

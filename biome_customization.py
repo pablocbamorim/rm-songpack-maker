@@ -525,8 +525,40 @@ def load_tag_members(folder: str) -> dict:
     return _clean_tag_members(data.get("biome_tag_members", {}))
 
 
+def _clean_tag_groups(value) -> dict:
+    """Return a valid {group_name: [biome_tag, ...]} mapping."""
+    if not isinstance(value, dict):
+        return {}
+    cleaned = {}
+    for name, tags in value.items():
+        if not isinstance(tags, (list, tuple)):
+            continue
+        values = list(dict.fromkeys(
+            str(tag) for tag in tags if isinstance(tag, str) and tag))
+        if values:
+            cleaned[str(name)] = values
+    return cleaned
+
+
+def load_tag_groups(folder: str) -> dict:
+    """Load custom biome-tag groups stored with a songpack.
+
+    Groups are editor metadata: they are shortcuts for adding plain
+    BIOMETAG= conditions and are never written into ReactiveMusic.yaml.
+    Missing or malformed data is treated as having no groups.
+    """
+    try:
+        with open(os.path.join(folder, CONFIG_FILENAME), encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError, TypeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return _clean_tag_groups(data.get("biome_tag_groups", {}))
+
+
 def save(folder: str, biomes: dict, tags: dict, attributes: dict | None = None,
-         tag_members: dict | None = None) -> None:
+         tag_members: dict | None = None, tag_groups: dict | None = None) -> None:
     """Write biome_customization.json into the songpack folder, atomically."""
     os.makedirs(folder, exist_ok=True)
     target = os.path.join(folder, CONFIG_FILENAME)
@@ -552,6 +584,10 @@ def save(folder: str, biomes: dict, tags: dict, attributes: dict | None = None,
                 if cleaned:
                     payload["biome_tag_members"] = dict(
                         sorted(cleaned.items(), key=lambda x: x[0].lower()))
+            cleaned_groups = _clean_tag_groups(tag_groups or {})
+            if cleaned_groups:
+                payload["biome_tag_groups"] = dict(
+                    sorted(cleaned_groups.items(), key=lambda x: x[0].lower()))
             json.dump(payload, f, indent=2, ensure_ascii=False)
             f.write("\n")
         os.replace(tmp, target)
