@@ -122,6 +122,25 @@ outside its own tab must tell the others. The hooks live on `App` (`app_core.py`
 | `on_biome_colors_changed()` | A colour or custom biome changed in Settings | Condition editor, simulator map |
 | `apply_theme()` | Light/dark was toggled | CTk appearance, ttk styles, simulator chart + tree tags |
 | `focus_entry_in_library(entry_id)` | "Open full editor…" in the case editor | Switches to Music & Conditions and selects the song row |
+| `mark_dirty()` | Any songpack-affecting edit (see below) | Title bar gets a "• unsaved changes" suffix |
+| `mark_clean()` | A load/save/new-songpack just made the in-memory pack match disk | Title bar suffix clears |
+
+`mark_dirty()` is called from the four hooks above (`on_entry_conditions_changed`,
+`on_pack_entries_changed`, `on_target_changed`, `on_biome_colors_changed`) plus a
+handful of mutation sites that don't go through them (add/remove entry or case,
+scope changes, priority reordering, Songpack Info's "Apply changes", loading a
+music folder). If you add a new place that mutates `pack.entries` or songpack
+metadata outside those hooks, call `self.app.mark_dirty()` (or, from a module
+that doesn't import `App`, `getattr(app, "mark_dirty", lambda: None)()`) there
+too, or the title bar / exit-confirmation will silently miss it.
+`action_new_songpack`, `action_load_config` and `_restore_last_songpack` call
+`mark_clean()` after `refresh_all()`; `action_save_config` and the new
+`action_quick_save()` (bound to Ctrl+S — saves straight back to
+`current_save_folder`, skipping the folder dialog, the "Saved" popup and
+`ui_enhancements`' reload/verify step) call it after a successful write.
+`_on_close_window` (the `WM_DELETE_WINDOW` handler, and File > Exit) confirms
+before discarding unsaved work, mirroring `action_new_songpack` /
+`action_load_config`.
 
 Switching tabs (`_on_tab_changed`) also pulls the Songpack Info fields into the pack,
 refreshes the priority and song lists, and rebuilds the simulator's cached plans

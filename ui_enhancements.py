@@ -104,6 +104,10 @@ def install(app):
                 app.pack.entries.append(Entry(songs=[stem]))
                 added += 1
         app.music_source_folder = folder
+        if added:
+            mark_dirty = getattr(app, "mark_dirty", None)
+            if callable(mark_dirty):
+                mark_dirty()
         app.refresh_all()
         app.set_status(
             f"Found {len(stems)} audio file(s), added {added} new blank entries.")

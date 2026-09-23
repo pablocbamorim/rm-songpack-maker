@@ -512,6 +512,7 @@ class InfoTab(ctk.CTkFrame):
 
     def _apply_clicked(self):
         self.pull_into_pack()
+        self.app.mark_dirty()
         self.app.set_status("Songpack info updated.")
 
     def _on_target_changed(self):
@@ -872,6 +873,7 @@ class LibraryTab(ctk.CTkFrame):
         self.app.pack.entries.append(entry)
         # New entries are normal ones: keep them above global/default entries.
         priority.enforce_scope_order(self.app.pack.entries)
+        self.app.mark_dirty()
         self.refresh_tree()
         self.tree.selection_set(entry.id)
         self.tree.see(entry.id)
@@ -906,6 +908,7 @@ class LibraryTab(ctk.CTkFrame):
 
         self.app.pack.entries = [
             e for e in self.app.pack.entries if e.id not in ids_to_remove]
+        self.app.mark_dirty()
 
         self.selected_entry_ids = [
             i for i in self.selected_entry_ids if i not in ids_to_remove]
@@ -1355,6 +1358,7 @@ class LibraryTab(ctk.CTkFrame):
         new_entry = _add_case_to(self.app.pack, group[0].id)
         if new_entry is None:
             return
+        self.app.mark_dirty()
         # A new case is a normal one, so it may have to hop above a
         # global/default case of the same song; re-derive row and tab.
         priority.enforce_scope_order(self.app.pack.entries)
@@ -1387,6 +1391,7 @@ class LibraryTab(ctk.CTkFrame):
         remaining = [e for e in group if e.id != victim.id]
         self.app.pack.entries = [
             e for e in self.app.pack.entries if e.id != victim.id]
+        self.app.mark_dirty()
         # The row is keyed by the first case, which may just have been removed.
         new_row = remaining[0].id
         self.selected_entry_ids = [
@@ -2245,6 +2250,7 @@ class LibraryTab(ctk.CTkFrame):
         if scope == entry.scope:
             return
         entry.scope = scope
+        self.app.mark_dirty()
         priority.enforce_scope_order(self.app.pack.entries)
         # Moving the entry can change which case is "Case 1" (the row key).
         group = _group_of(self.app.pack, entry.id)
@@ -2746,6 +2752,7 @@ class PriorityTab(ctk.CTkFrame):
     def _auto_arrange(self):
         self.app.pack.entries = priority.auto_priority_order(
             self.app.pack.entries)
+        self.app.mark_dirty()
         self.refresh()
         self.app.library_tab.refresh_tree(keep_selection=True)
         self.app.set_status(
@@ -2763,6 +2770,7 @@ class PriorityTab(ctk.CTkFrame):
         new_idx = idx + direction
         if 0 <= new_idx < len(entries):
             entries[idx], entries[new_idx] = entries[new_idx], entries[idx]
+            self.app.mark_dirty()
             self.refresh()
             self.tree.selection_set(iid)
             self.tree.see(iid)
@@ -2787,6 +2795,7 @@ class PriorityTab(ctk.CTkFrame):
         id_to_entry = {e.id: e for e in self.app.pack.entries}
         self.app.pack.entries = [id_to_entry[i]
                                  for i in order_ids if i in id_to_entry]
+        self.app.mark_dirty()
         self.refresh()
 
 
@@ -2820,6 +2829,14 @@ class App(ctk.CTk):
         # bundled ones come from default_biome_colors.json).
         self.biome_custom_attributes = {}
 
+        # Unsaved-changes tracking (README "Coming soon" #1). Sits on the
+        # App itself, not the Songpack, because it is about the *session*
+        # (has anything changed since the last load/save), not the data.
+        # Set via mark_dirty()/mark_clean() -- see those methods for which
+        # actions flip it, and _on_close_window/action_new_songpack/
+        # action_load_config for where it's checked or reset.
+        self._dirty = False
+
         # Editor-wide preferences are loaded before the tabs are built so
         # SettingsTab reads the persisted values on construction.
         self.status_var = tk.StringVar(
@@ -2827,6 +2844,12 @@ class App(ctk.CTk):
         )
 
         self._build_menu()
+        self.protocol("WM_DELETE_WINDOW", self._on_close_window)
+        # Ctrl+S: save back to the current songpack folder without asking
+        # for it again (see action_quick_save). bind_all so it works no
+        # matter which widget has focus.
+        self.bind_all("<Control-s>", lambda _e: self.action_quick_save())
+        self._update_title()
 
         # Logo-gradient backdrop behind the application, kept deliberately subtle.
         self.brand_background = theme.build_background(
@@ -2914,6 +2937,7 @@ class App(ctk.CTk):
         self.music_source_folder = music_folder if os.path.isdir(music_folder) else None
         self.simulator_tab.reset()
         self.refresh_all()
+        self.mark_clean()
         self.notebook.set("Simulation Map")
         self.set_status(
             f"Restored {len(self.pack_data.entries)} entries from {path}")
@@ -2944,6 +2968,39 @@ class App(ctk.CTk):
     def set_status(self, text: str):
         self.status_var.set(text)
 
+    # -- unsaved-changes tracking -------------------------------------------
+    def mark_dirty(self) -> None:
+        """Record that app.pack (or its songpack-metadata sidecars) has
+        changed since the last successful load/save. Cheap and idempotent,
+        so call sites don't need to check first.
+        """
+        if not self._dirty:
+            self._dirty = True
+            self._update_title()
+
+    def mark_clean(self) -> None:
+        """Call after a load/save/new-songpack has just made the in-memory
+        pack match what's on disk (or made a blank pack the new baseline).
+        """
+        was_dirty = self._dirty
+        self._dirty = False
+        if was_dirty:
+            self._update_title()
+
+    def _update_title(self) -> None:
+        self.title("ReactiveMusic Songpack Editor" +
+                   ("  \u2022 unsaved changes" if self._dirty else ""))
+
+    def _on_close_window(self) -> None:
+        """WM_DELETE_WINDOW handler and File > Exit: confirm before
+        discarding unsaved work, exactly like New/Load Config already do.
+        """
+        if self._dirty and not messagebox.askyesno(
+                "Unsaved changes",
+                "This songpack has unsaved changes. Exit without saving?"):
+            return
+        self.destroy()
+
     def refresh_all(self):
         self.info_tab.push_from_pack()
         self.library_tab.refresh_tree()
@@ -2961,6 +3018,7 @@ class App(ctk.CTk):
             self.simulator_tab.refresh()
 
     def on_entry_conditions_changed(self, _entry: Entry):
+        self.mark_dirty()
         self.library_tab.refresh_tree(keep_selection=True)
         self.priority_tab.refresh()
 
@@ -2971,6 +3029,7 @@ class App(ctk.CTk):
         (biome_case_editor.py). Refresh every view of app.pack.entries so
         the two tabs stay in agreement.
         """
+        self.mark_dirty()
         self.library_tab.refresh_tree(keep_selection=True)
         self.priority_tab.refresh()
         self.simulator_tab.refresh()
@@ -3006,6 +3065,7 @@ class App(ctk.CTk):
         """The Minecraft/mod version picker moved, so the condition editor
         has to re-gate itself against the new target.
         """
+        self.mark_dirty()
         # Rebuilds the editor for the current selection *and* case tab.
         self.library_tab.rebuild_editor(refresh_bar=False)
 
@@ -3051,6 +3111,7 @@ class App(ctk.CTk):
         """A biome/tag colour or definition changed in the Settings tab, so
         the condition editor's biome list needs redrawing.
         """
+        self.mark_dirty()
         lib = self.library_tab
         if len(lib.selected_entry_ids) == 1:
             lib.rebuild_editor(refresh_bar=False)
@@ -3071,10 +3132,13 @@ class App(ctk.CTk):
         filemenu.add_command(label="Load Music Folder…",
                              command=lambda: self.action_load_music_folder())
         filemenu.add_separator()
+        filemenu.add_command(label="Save", accelerator="Ctrl+S",
+                             command=lambda: self.action_quick_save())
         filemenu.add_command(label="Save Config…",
                              command=lambda: self.action_save_config())
         filemenu.add_separator()
-        filemenu.add_command(label="Exit", command=self.destroy)
+        filemenu.add_command(label="Exit",
+                             command=lambda: self._on_close_window())
         menubar.add_cascade(label="File", menu=filemenu)
 
         helpmenu = tk.Menu(menubar, tearoff=0)
@@ -3087,9 +3151,10 @@ class App(ctk.CTk):
 
     # -- actions -------------------------------------------------
     def action_new_songpack(self):
-        if not messagebox.askyesno(
-                "New Songpack",
-                "Discard the current songpack and start a new one?"):
+        prompt = "Discard the current songpack and start a new one?"
+        if self._dirty:
+            prompt = "This songpack has unsaved changes. " + prompt
+        if not messagebox.askyesno("New Songpack", prompt):
             return
         self.pack_data = Songpack()
         self.music_source_folder = None
@@ -3099,11 +3164,17 @@ class App(ctk.CTk):
         self.biome_custom_attributes = {}
         self.simulator_tab.reset()
         self.refresh_all()
+        self.mark_clean()
         self.set_status(
             "Started a new, empty songpack. Set its Minecraft version in Songpack Info "
             "so the editor can match the conditions to your mod build.")
 
     def action_load_config(self):
+        if self._dirty and not messagebox.askyesno(
+                "Unsaved changes",
+                "This songpack has unsaved changes. Discard them and load "
+                "a different songpack?"):
+            return
         path = filedialog.askdirectory(
             title="Select the songpack folder (containing ReactiveMusic.yaml)")
         if not path:
@@ -3128,6 +3199,7 @@ class App(ctk.CTk):
         self.save_settings()
         self.simulator_tab.reset()
         self.refresh_all()
+        self.mark_clean()
         version = self.effective_mod_version()
         target = f", targeting Reactive Music {version}" if version else ""
         self.set_status(
@@ -3150,6 +3222,8 @@ class App(ctk.CTk):
                 self.pack_data.entries.append(Entry(songs=[stem]))
                 added += 1
         self.music_source_folder = folder
+        if added:
+            self.mark_dirty()
         self.refresh_all()
         self.set_status(
             f"Found {len(stems)} audio file(s) in {folder}, added {added} new blank entries. "
@@ -3188,6 +3262,7 @@ class App(ctk.CTk):
         self.current_save_folder = folder
         self.settings["last_songpack_folder"] = folder
         self.save_settings()
+        self.mark_clean()
         self.set_status(f"Saved to {path}")
         messagebox.showinfo(
             "Saved",
@@ -3197,6 +3272,42 @@ class App(ctk.CTk):
             f"Target build saved to:\n"
             f"{os.path.join(folder, mod_versions.TARGET_FILENAME)}",
         )
+
+    def action_quick_save(self) -> None:
+        """Ctrl+S / File > Save: write back to the folder this songpack was
+        last loaded from or saved to, without asking again. Falls back to
+        the full "Save Config…" flow (which prompts for a folder and shows
+        the confirmation dialog) the first time a brand-new songpack is
+        saved, since there's no folder to reuse yet.
+
+        Unlike "Save Config…", this skips the "Saved" popup (a quick-save
+        shouldn't interrupt typing) and skips ui_enhancements' reload/verify
+        step, trading a little extra safety for speed on every keystroke of
+        Ctrl+S. Use "Save Config…" for the verified, defensive save.
+        """
+        if not self.current_save_folder:
+            self.action_save_config()
+            return
+        self.info_tab.pull_into_pack()
+        if not self._confirm_target_problems():
+            return
+        if not self._confirm_pack_issues():
+            return
+        folder = self.current_save_folder
+        try:
+            path = yaml_io.save_songpack(
+                self.pack_data, folder, copy_music_from=None)
+            biome_customization.save(
+                folder, self.biome_custom_biomes, self.biome_custom_tags,
+                self.biome_custom_attributes)
+            mod_versions.save(folder, self.pack_data)
+        except Exception as exc:
+            messagebox.showerror("Save failed", str(exc))
+            return
+        self.settings["last_songpack_folder"] = folder
+        self.save_settings()
+        self.mark_clean()
+        self.set_status(f"Saved to {path}")
 
     def _confirm_pack_issues(self) -> bool:
         """Sanity check before writing (pack_validation.py): songless or

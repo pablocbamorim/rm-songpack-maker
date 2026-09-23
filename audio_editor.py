@@ -1016,6 +1016,9 @@ class AudioEditorWindow(ctk.CTkToplevel):
             return
         pack.entries.append(Entry(songs=[stem]))
         try:
+            mark_dirty = getattr(self.app, "mark_dirty", None)
+            if callable(mark_dirty):
+                mark_dirty()
             self.app.library_tab.refresh_tree(keep_selection=True)
             self.app.priority_tab.refresh()
         except Exception:  # noqa: BLE001 - refreshing is a nicety, not the job
