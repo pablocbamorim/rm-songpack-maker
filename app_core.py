@@ -20,6 +20,7 @@ See README.md for the reasoning behind the rarity scoring and the
 from __future__ import annotations
 
 import os
+import math
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog, colorchooser
 import customtkinter as ctk
@@ -2345,9 +2346,23 @@ class LibraryTab(ctk.CTkFrame):
         )
         self.force_chance_slider.pack(
             side="left", padx=8, fill="x", expand=True)
+        # The slider is a convenient coarse control, but the YAML format accepts
+        # any numeric value from 0 to 1. Keep a text field beside it so loading
+        # an authored value such as 0.333 does not force it down to 0.33 just
+        # because the user opens and saves the editor.
+        self.force_chance_text_var = tk.StringVar(
+            value=f"{entry.force_chance:.15g}")
+        self.force_chance_entry = ctk.CTkEntry(
+            chance_row, textvariable=self.force_chance_text_var,
+            width=78, font=_BODY)
+        self.force_chance_entry.pack(side="left", padx=(6, 0))
+        self.force_chance_entry.bind(
+            "<Return>", lambda _e: self._on_force_chance_text_changed(entry))
+        self.force_chance_entry.bind(
+            "<FocusOut>", lambda _e: self._on_force_chance_text_changed(entry))
         self.force_chance_label = ctk.CTkLabel(
-            chance_row, text=f"{entry.force_chance:.2f}", font=_BODY, width=48)
-        self.force_chance_label.pack(side="left", padx=(6, 0))
+            chance_row, text="0–1", font=_SMALL, width=34)
+        self.force_chance_label.pack(side="left", padx=(4, 0))
 
     # -- custom raw conditions ----------------------------------------------
     def _build_custom_section(self, entry: Entry):
@@ -2439,8 +2454,29 @@ class LibraryTab(ctk.CTkFrame):
         entry.force_stop_on_valid = self.force_stop_valid_var.get()
         entry.force_stop_on_invalid = self.force_stop_invalid_var.get()
         entry.force_start_on_valid = self.force_start_var.get()
-        entry.force_chance = round(float(self.force_chance_var.get()), 2)
-        self.force_chance_label.configure(text=f"{entry.force_chance:.2f}")
+        entry.force_chance = float(self.force_chance_var.get())
+        self.force_chance_text_var.set(f"{entry.force_chance:.15g}")
+        self._refresh_after_change(entry, rebuild=False)
+
+    def _on_force_chance_text_changed(self, entry: Entry):
+        """Commit a typed forceChance without reducing it to slider precision.
+
+        The YAML format accepts numeric values across the full 0..1 range, so
+        the text field is the lossless editing path. Invalid or out-of-range
+        input is rejected locally and the previous valid value is restored.
+        """
+        raw = self.force_chance_text_var.get().strip()
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            value = None
+        if (value is None or not math.isfinite(value)
+                or not 0.0 <= value <= 1.0):
+            self.force_chance_text_var.set(f"{entry.force_chance:.15g}")
+            return
+        entry.force_chance = value
+        self.force_chance_var.set(value)
+        self.force_chance_text_var.set(f"{value:.15g}")
         self._refresh_after_change(entry, rebuild=False)
 
     def _on_custom_changed(self, entry: Entry):
