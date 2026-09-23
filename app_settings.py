@@ -34,6 +34,9 @@ DEFAULTS = {
     "preview_volume": 1.0,
     # Last songpack folder opened successfully; used for VSCode-style session restore.
     "last_songpack_folder": "",
+    # Show compatibility biome tags whose bundled membership list is empty.
+    # Most songpacks do not need these, so keep the map focused by default.
+    "show_empty_biome_tags": False,
 }
 
 
