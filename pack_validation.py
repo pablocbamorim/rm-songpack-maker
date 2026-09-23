@@ -25,6 +25,8 @@ Target-version problems are reported separately by mod_versions.validate_pack.
 from __future__ import annotations
 
 import math
+
+import constants as C
 from dataclasses import dataclass
 from typing import List
 
@@ -50,6 +52,22 @@ def _label(entry, position: int) -> str:
     return f"Entry {position} ({entry.display_name()})"
 
 
+def _fixed_condition_contradictions(entry) -> List[str]:
+    """Return fixed-event combinations that cannot be true simultaneously.
+
+    ReactiveMusic combines different event-array items with AND, so choosing
+    mutually exclusive time states in separate UI checkboxes creates an entry
+    that can never match. This remains a warning because the YAML format does
+    not forbid such combinations and the editor must not reject authored data.
+    """
+    selected = entry.selected.get(C.CATEGORY_TIME, set())
+    contradictions = []
+    for left, right in (("DAY", "NIGHT"), ("SUNRISE", "SUNSET")):
+        if left in selected and right in selected:
+            contradictions.append(f"{left} + {right}")
+    return contradictions
+
+
 def validate_pack(pack: Songpack) -> List[Issue]:
     issues: List[Issue] = []
     entries = pack.entries
@@ -65,6 +83,13 @@ def validate_pack(pack: Songpack) -> List[Issue]:
                 WARNING, f"{name} has no conditions; it would be saved as "
                          "'events: []'. The songpack format does not document "
                          "what an empty event list does."))
+        contradictions = _fixed_condition_contradictions(entry)
+        if contradictions:
+            issues.append(Issue(
+                WARNING,
+                f"{name} has mutually exclusive time conditions: "
+                + ", ".join(contradictions) + ". This entry can never match."
+            ))
         chance = entry.force_chance
         if (isinstance(chance, bool) or not isinstance(chance, (int, float))
                 or math.isnan(chance) or not 0.0 <= chance <= 1.0):
