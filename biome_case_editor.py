@@ -480,7 +480,8 @@ class BiomeCaseEditorWindow(ctk.CTkToplevel):
         The editor does not copy the tag condition onto the biome or alter
         the YAML; it only exposes the tag-derived match in this biome's view.
         """
-        members = biome_customization.tag_members(tag_value)
+        members = biome_customization.tag_members(
+            tag_value, self.app.biome_custom_tag_members)
         suffix = f" ({len(members)} biomes)" if members else ""
         _wrapping_label(
             self.body,
@@ -508,7 +509,8 @@ class BiomeCaseEditorWindow(ctk.CTkToplevel):
         the target build predates BIOMETAG= (entries are still editable, and
         Save Config warns again, like every other version-gated condition).
         """
-        members = biome_customization.tag_members(self.biome_name)
+        members = biome_customization.tag_members(
+            self.biome_name, self.app.biome_custom_tag_members)
         if members:
             shown = ", ".join(members[:8])
             if len(members) > 8:
