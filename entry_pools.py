@@ -153,14 +153,19 @@ def reconcile_music_folder_entries(entries: List[Entry], stems: List[str]) -> tu
 
 
 def pooled_songs(members: List[Entry]) -> List[str]:
-    """Every song of the run, in order, without duplicates."""
+    """Every song of the run, in order, preserving deliberate duplicates.
+
+    A song pool is an ordered YAML list. The editor must not silently turn
+    ["A", "A", "B"] into ["A", "B"] because duplicate pool members may be
+    used by ReactiveMusic's song-selection logic as repeated entries.
+    Keeping the list lossless also makes load -> edit -> save faithful to the
+    user's authored YAML even when the editor cannot otherwise attach meaning
+    to the duplication.
+    """
     songs: List[str] = []
     for member in members:
-        for song in member.songs:
-            if song not in songs:
-                songs.append(song)
+        songs.extend(member.songs)
     return songs
-
 
 def merge_equivalent_entries(entries: List[Entry]) -> List[Tuple[Entry, List[str]]]:
     """[(representative entry, pooled songs)] in write order."""

@@ -415,6 +415,13 @@ class SongPools(unittest.TestCase):
         self.assertTrue(new_entries[1].has_any_condition())
         self.assertFalse(new_entries[2].has_any_condition())
 
+    def test_duplicate_pool_songs_are_preserved(self):
+        pool = entry_of(["DAY"], ["A", "A", "B"])
+        saved = yaml_io.songpack_to_dict(Songpack(entries=[pool]))["entries"]
+        self.assertEqual(saved[0]["songs"], ["A", "A", "B"])
+        roundtripped = roundtrip(Songpack(entries=[pool]))
+        self.assertEqual(roundtripped.entries[0].songs, ["A", "A", "B"])
+
     def test_pool_round_trips_in_order(self):
         pack = load_text('''
             entries:
@@ -497,6 +504,16 @@ class SaveValidation(unittest.TestCase):
         broad = entry_of(["BIOME=forest"], ["broad"])
         narrow = entry_of(["BIOME=dark_forest"], ["narrow"])
         self.assertTrue(any("can never play" in m for m in self.messages([broad, narrow])))
+
+    def test_contradictory_time_conditions_are_reported(self):
+        e = entry_of(["DAY", "NIGHT"])
+        msgs = self.messages([e])
+        self.assertTrue(any("mutually exclusive" in m and "DAY + NIGHT" in m for m in msgs))
+
+    def test_sunrise_and_sunset_are_reported(self):
+        e = entry_of(["SUNRISE", "SUNSET"])
+        msgs = self.messages([e])
+        self.assertTrue(any("SUNRISE + SUNSET" in m for m in msgs))
 
     def test_documented_force_flag_combinations_are_not_invented_errors(self):
         e = entry_of(["DAY"], force_stop_on_changed=True, force_stop_on_valid=True,
