@@ -700,7 +700,8 @@ class SimulatorTab(ctk.CTkFrame):
             # position is unaffected, so icons don't jump when filtering.
             return {t: a for t, a in attrs.items()
                     if any(dimension_of.get(b) == wanted
-                           for b in biome_customization.tag_members(t))}
+                           for b in biome_customization.tag_members(
+                               t, self.app.biome_custom_tag_members))}
         return {n: a for n, a in attrs.items() if dimension_of.get(n) == wanted}
 
     def _chart_backdrop(self) -> dict:
