@@ -180,6 +180,50 @@ def _has_biome_condition(entry: Entry) -> bool:
     )
 
 
+#: Time-of-day tokens -- exactly one is always true in-game.
+_TIME_TOKENS = tuple(C.FIXED_CATEGORIES[C.CATEGORY_TIME]["options"])
+
+
+def _has_time_condition(entry: Entry) -> bool:
+    """Does this entry require a specific time of day in ANY way?"""
+    wanted = {t.upper() for t in _TIME_TOKENS}
+    return any(a.kind == conditions.KIND_FIXED and a.value.upper() in wanted
+               for a in condition_logic.entry_atoms(entry))
+
+
+def _time_scenarios(entry: Entry):
+    """Return no extra flag when time is pinned, otherwise test every time."""
+    if _has_time_condition(entry):
+        return [frozenset()]
+    return [frozenset({token}) for token in _TIME_TOKENS]
+
+
+def _where_label(biome: str, time_flags) -> str:
+    """Describe a checked biome/time situation for the blocker report."""
+    return biome if not time_flags else f"{biome} at {next(iter(time_flags))}"
+
+
+def _is_reachability_candidate(entry: Entry) -> bool:
+    """Return whether the reachability sweep should test this entry.
+
+    Global entries without a place are swept across biomes; place-specific
+    entries without a time condition are swept across all time tokens.
+    Default and time-only entries are deliberately excluded.
+    """
+    if not entry.songs:
+        return False
+    scope = getattr(entry, "scope", C.SCOPE_NORMAL)
+    if scope == C.SCOPE_DEFAULT:
+        return False
+    if scope == C.SCOPE_GLOBAL and not _has_biome_condition(entry):
+        return True
+    return _has_biome_condition(entry) and not _has_time_condition(entry)
+
+
+def has_checkable_entry(entries) -> bool:
+    """Is there anything ``find_blockers`` would actually sweep?"""
+    return any(_is_reachability_candidate(e) for e in entries)
+
 def biome_dimensions(custom_attributes: Optional[dict] = None) -> Dict[str, str]:
     """{biome: dimension id} for every biome the editor knows about (bundled
     plus this songpack's custom ones, which are assumed to be overworld).
