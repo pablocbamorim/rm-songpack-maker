@@ -72,6 +72,16 @@ class TestTimePooling(unittest.TestCase):
         self.assertIn(["DAY || NIGHT", "BIOMETAG=IS_FOREST"],
                       [condition_logic.build_events(e) for e in result.entries])
 
+    def test_later_sibling_is_reported(self):
+        entries = [
+            mk(["floater"], ["BIOMETAG=IS_FOREST"]),
+            mk(["day-song"], ["DAY", "BIOMETAG=IS_FOREST"]),
+        ]
+        result = time_pooling.expand_time_floaters(entries)
+        self.assertEqual(result.report.merged, 1)
+        self.assertTrue(any("later in priority order" in warning
+                            for warning in result.report.warnings))
+
     def test_force_flags_are_left_untouched(self):
         original = mk(["floater"], ["BIOMETAG=IS_FOREST"],
                       force_stop_on_changed=True)
