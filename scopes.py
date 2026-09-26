@@ -152,8 +152,8 @@ def save(folder: str, groups: List[Tuple[Entry, List[str]]]) -> Optional[str]:
 # ---------------------------------------------------------------------------
 @dataclass
 class Blocker:
-    """Entry ``blocker`` stops global entry ``scoped`` from being reached in
-    every biome of ``biomes``.
+    """Entry ``blocker`` stops checked entry ``scoped`` from being reached in
+    the listed biome/time situations.
     """
     scoped: Entry
     blocker: Entry
