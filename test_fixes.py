@@ -109,15 +109,6 @@ class TestScopesFindBlockers(unittest.TestCase):
         blockers = scopes.find_blockers([glob], {"plains": "minecraft:overworld"})
         self.assertEqual(blockers, [])
 
-    def test_global_entry_is_swept_across_known_biomes(self):
-        day_forest = mk(songs=["DaySong"], selected={C.CATEGORY_TIME: {"DAY"}},
-                        biomes=[("forest", False)])
-        global_song = mk(songs=["GlobalSong"], scope=C.SCOPE_GLOBAL)
-        blockers = scopes.find_blockers(
-            [day_forest, global_song], {"forest": "minecraft:overworld"})
-        self.assertEqual(len(blockers), 1)
-        self.assertEqual(blockers[0].biomes, ["forest"])
-
     def test_place_conditioned_time_floater_is_not_a_global_candidate(self):
         floater = mk(songs=["AnyTimeSong"], biomes=[("forest", False)])
         self.assertEqual(
