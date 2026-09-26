@@ -77,6 +77,15 @@ class SettingsTab(ctk.CTkFrame):
             command=self._on_pool_overlaps_toggled,
         ).pack(anchor="w", padx=12, pady=4)
 
+        self.expand_time_var = tk.BooleanVar(
+            value=bool(app.settings.get("expand_time_agnostic_songs", True)))
+        ctk.CTkSwitch(
+            prefs,
+            text="When saving, expand place-conditioned songs with no time into per-time pools",
+            variable=self.expand_time_var,
+            command=self._on_expand_time_toggled,
+        ).pack(anchor="w", padx=12, pady=4)
+
         ctk.CTkLabel(
             prefs,
             text=("Saved to your user profile, so they apply to every songpack and every "
@@ -348,6 +357,15 @@ class SettingsTab(ctk.CTkFrame):
             "Biome pooling on save turned %s. It takes effect the next time "
             "you save." %
             ("on" if self.pool_overlaps_var.get() else "off"))
+
+    def _on_expand_time_toggled(self):
+        self.app.settings["expand_time_agnostic_songs"] = bool(
+            self.expand_time_var.get())
+        self.app.save_settings()
+        self.app.set_status(
+            "Time-agnostic song expansion on save turned %s. It takes effect "
+            "the next time you save." %
+            ("on" if self.expand_time_var.get() else "off"))
 
     # -- biome colour list -------------------------------------------------
     def _store(self, is_tag: bool) -> dict:
