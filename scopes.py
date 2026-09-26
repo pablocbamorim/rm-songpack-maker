@@ -265,14 +265,6 @@ def enable_fallback_on_blockers(entries: List[Entry],
     return changed
 
 
-def _reason_label(entry: Entry) -> str:
-    """Label the kind of reachability sweep that produced this report."""
-    if (getattr(entry, "scope", C.SCOPE_NORMAL) == C.SCOPE_GLOBAL
-            and not _has_biome_condition(entry)):
-        return "Global"
-    return "Time-agnostic"
-
-
 def describe_blockers(entries: List[Entry], blockers: List[Blocker],
                       max_biomes: int = 6) -> str:
     """Plain-text report for a dialog."""
