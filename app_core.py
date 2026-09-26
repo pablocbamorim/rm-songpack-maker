@@ -46,6 +46,7 @@ import scopes
 import pack_validation
 import biome_tag_platforms
 import biome_pooling
+import time_pooling
 import tag_groups
 from models import Songpack, Entry, BiomeCondition, DimensionCondition, BlockCondition
 
@@ -3029,7 +3030,7 @@ class PriorityTab(ctk.CTkFrame):
                       command=lambda: self._nudge(-1)).pack(side="left", padx=3)
         ctk.CTkButton(btns, text="Move Down", width=100, font=_BODY,
                       command=lambda: self._nudge(1)).pack(side="left", padx=3)
-        ctk.CTkButton(btns, text="Check reachability…", width=170, font=_BODY,
+        ctk.CTkButton(btns, text="Check global songs…", width=170, font=_BODY,
                       command=self._check_globals).pack(side="left", padx=3)
         ctk.CTkButton(btns, text="Split OR conditions into cases…", width=220, font=_BODY,
                       command=self._split_or_conditions).pack(side="left", padx=3)
@@ -3098,13 +3099,11 @@ class PriorityTab(ctk.CTkFrame):
         they should cover, and offer to turn allowFallback on for blockers.
         """
         pack = self.app.pack
-        if not scopes.has_checkable_entry(pack.entries):
+        if not any(e.scope == C.SCOPE_GLOBAL for e in pack.entries):
             messagebox.showinfo(
                 "Reachability check",
-                "Nothing to check yet. This looks for two things: an entry "
-                "marked Global (Music & Conditions > Scope), or an entry that "
-                "names a biome/biome tag but leaves every time-of-day option "
-                "unchecked (meaning \"any time\").")
+                "Nothing to check yet. This looks for entries marked Global "
+                "(Music & Conditions > Scope).")
             return
         biomes = scopes.biome_dimensions(self.app.biome_custom_attributes)
         blockers = scopes.find_blockers(pack.entries, biomes)
@@ -3287,6 +3286,9 @@ class App(ctk.CTk):
         # or None when it was off / has not run. Read for the status line and
         # the "Saved" dialog.
         self.last_pooling_report = None
+        # What the last save-time time-axis expansion did
+        # (time_pooling.TimePoolingReport), with the same lifecycle.
+        self.last_time_pooling_report = None
 
         # Editor-wide preferences are loaded before the tabs are built so
         # SettingsTab reads the persisted values on construction.
@@ -3519,45 +3521,78 @@ class App(ctk.CTk):
         return version
 
     def output_pooler(self):
-        """The save-time "entries as they should be WRITTEN" hook for
-        yaml_io.save_songpack(pooling=...), or None when the Settings switch is
-        off. It expands entries that overlap on the same biomes into per-biome
-        song pools (biome_pooling.py); the editor's own entries are untouched.
-        If the target build predates allowFallback, the original entries that
-        stay below the pools are left as they were (the flag is not added).
+        """The save-time output transform chain, or None when both transforms
+        are disabled in Settings. Each transform works on the logical entries
+        ReactiveMusic will read, while the editor's authored entries remain
+        untouched.
         """
-        if not self.settings.get("pool_overlapping_biomes", True):
+        pool_biomes = self.settings.get("pool_overlapping_biomes", True)
+        expand_time = self.settings.get("expand_time_agnostic_songs", True)
+        if not (pool_biomes or expand_time):
             self.last_pooling_report = None
+            self.last_time_pooling_report = None
             return None
+
         fallback_ok = mod_versions.supports(
             self.effective_mod_version(), "allow_fallback")
         biomes = list(biome_customization.load_app_dimensions())
 
         def pool(entries):
-            result = biome_pooling.pool_overlapping_biomes(
-                entries, biomes=biomes, tags_of=simulation.biome_tags,
-                residual_fallback=fallback_ok)
-            self.last_pooling_report = result.report
-            return result.entries
+            if expand_time:
+                time_result = time_pooling.expand_time_floaters(entries)
+                self.last_time_pooling_report = time_result.report
+                entries = time_result.entries
+            else:
+                self.last_time_pooling_report = None
+
+            if pool_biomes:
+                result = biome_pooling.pool_overlapping_biomes(
+                    entries, biomes=biomes, tags_of=simulation.biome_tags,
+                    residual_fallback=fallback_ok)
+                self.last_pooling_report = result.report
+                entries = result.entries
+            else:
+                self.last_pooling_report = None
+            return entries
+
         return pool
 
     def _pooling_note(self) -> str:
-        report = self.last_pooling_report
-        if report is None or not report.pools:
+        biome = self.last_pooling_report
+        time = self.last_time_pooling_report
+        parts = []
+        if time is not None and (time.created or time.merged):
+            parts.append(
+                f"expanded {time.dropped} time-agnostic entry(s) into "
+                f"{time.created} new per-time pool(s), merging {time.merged} "
+                "time variant(s)")
+        if biome is not None and biome.pools:
+            parts.append(
+                f"pooled {biome.pools} biome song pool(s) from overlapping entries")
+        if not parts:
             return ""
-        return (f" (pooled {report.pools} biome song pool(s) from overlapping "
-                "entries; your own entries are kept in "
-                f"{yaml_io.SOURCE_FILENAME})")
+        return " (" + "; ".join(parts) + "; your own entries are kept in " + \
+            f"{yaml_io.SOURCE_FILENAME})"
 
     def _pooling_details(self) -> str:
-        report = self.last_pooling_report
-        if report is None or not (report.groups or report.skipped
-                                  or report.warnings):
+        biome = self.last_pooling_report
+        time = self.last_time_pooling_report
+        sections = []
+        if time is not None and (time.skipped or time.warnings):
+            lines = [f"\u2022 {text}" for text in
+                     time.skipped + time.warnings]
+            sections.append("Time-axis pooling:\n" + "\n".join(lines))
+        if biome is not None and (biome.groups or biome.skipped
+                                  or biome.warnings):
+            lines = [f"\u2022 {text}" for text in
+                     biome.groups + biome.skipped + biome.warnings]
+            sections.append("Biome pooling:\n" + "\n".join(lines))
+        if not sections:
             return ""
-        lines = [f"\u2022 {text}" for text in
-                 report.groups + report.skipped + report.warnings]
-        text = "\n\nBiome pooling:\n" + "\n".join(lines)
-        if report.pools:
+        changed = ((time is not None and (time.created or time.merged))
+                   or (biome is not None and biome.pools))
+        text = "\n\n" + "\n\n".join(sections)
+        if changed:
             text += ("\n\nYour own entries are kept in "
                      f"{os.path.join(self.current_save_folder or '', yaml_io.SOURCE_FILENAME)}.")
         return text
