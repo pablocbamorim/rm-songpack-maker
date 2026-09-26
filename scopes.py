@@ -261,27 +261,29 @@ def find_blockers(entries: List[Entry],
     logical = entry_pools.logical_view(entries).entries
     found: Dict[Tuple[str, str], Blocker] = {}
     for scoped in logical:
-        if (getattr(scoped, "scope", None) != C.SCOPE_GLOBAL
-                or not scoped.songs or _has_biome_condition(scoped)):
+        if not _is_reachability_candidate(scoped):
             continue
         for atoms in _scenarios(scoped):
             manual = simulation.parse_manual("\n".join(atoms))
-            for biome, dimension in biomes.items():
-                state = simulation.make_state(biome, dimension, set(), manual)
-                plan = simulation.build_plan(logical, state)
-                if scoped.id not in plan.valid_ids:
-                    continue      # e.g. DIM= mismatch: not this biome's business
-                items = [i for i in plan.items if i.entry_id == scoped.id]
-                if not items or any(i.reachable for i in items):
-                    continue
-                blocker = next((e for e in logical
-                                if e.id == plan.terminal_entry_id), None)
-                if blocker is None:
-                    continue
-                item = found.setdefault(
-                    (scoped.id, blocker.id), Blocker(scoped, blocker))
-                if biome not in item.biomes:
-                    item.biomes.append(biome)
+            for time_flags in _time_scenarios(scoped):
+                for biome, dimension in biomes.items():
+                    state = simulation.make_state(
+                        biome, dimension, set(time_flags), manual)
+                    plan = simulation.build_plan(logical, state)
+                    if scoped.id not in plan.valid_ids:
+                        continue
+                    items = [i for i in plan.items if i.entry_id == scoped.id]
+                    if not items or any(i.reachable for i in items):
+                        continue
+                    blocker = next((e for e in logical
+                                    if e.id == plan.terminal_entry_id), None)
+                    if blocker is None:
+                        continue
+                    item = found.setdefault(
+                        (scoped.id, blocker.id), Blocker(scoped, blocker))
+                    where = _where_label(biome, time_flags)
+                    if where not in item.biomes:
+                        item.biomes.append(where)
     return list(found.values())
 
 
