@@ -3029,7 +3029,7 @@ class PriorityTab(ctk.CTkFrame):
                       command=lambda: self._nudge(-1)).pack(side="left", padx=3)
         ctk.CTkButton(btns, text="Move Down", width=100, font=_BODY,
                       command=lambda: self._nudge(1)).pack(side="left", padx=3)
-        ctk.CTkButton(btns, text="Check global songs…", width=160, font=_BODY,
+        ctk.CTkButton(btns, text="Check reachability…", width=170, font=_BODY,
                       command=self._check_globals).pack(side="left", padx=3)
         ctk.CTkButton(btns, text="Split OR conditions into cases…", width=220, font=_BODY,
                       command=self._split_or_conditions).pack(side="left", padx=3)
@@ -3094,38 +3094,39 @@ class PriorityTab(ctk.CTkFrame):
             self.tree.selection_set(selected[0])
 
     def _check_globals(self):
-        """Report entries that keep a global song from being reached, and
-        offer to turn allowFallback on for them (scopes.py).
+        """Report checked entries that cannot be reached in the situations
+        they should cover, and offer to turn allowFallback on for blockers.
         """
         pack = self.app.pack
-        if not any(e.scope == C.SCOPE_GLOBAL for e in pack.entries):
+        if not scopes.has_checkable_entry(pack.entries):
             messagebox.showinfo(
-                "Global songs",
-                "No entry is marked Global yet. Set an entry's scope under "
-                "Music & Conditions > Scope.")
+                "Reachability check",
+                "Nothing to check yet. This looks for two things: an entry "
+                "marked Global (Music & Conditions > Scope), or an entry that "
+                "names a biome/biome tag but leaves every time-of-day option "
+                "unchecked (meaning \"any time\").")
             return
         biomes = scopes.biome_dimensions(self.app.biome_custom_attributes)
         blockers = scopes.find_blockers(pack.entries, biomes)
         if not blockers:
             messagebox.showinfo(
-                "Global songs",
-                "Every global song can be reached in every known biome when only "
-                "its own conditions are true.")
+                "Reachability check",
+                "Every checked song can be reached in every situation it should cover.")
             return
         report = scopes.describe_blockers(pack.entries, blockers)
         if not mod_versions.supports(
                 self.app.effective_mod_version(), "allow_fallback"):
             messagebox.showwarning(
-                "Global songs are blocked",
+                "Some songs are blocked",
                 report + "\n\nThe target build predates allowFallback, so this "
                 "cannot be fixed by enabling it.")
             return
         if not messagebox.askyesno(
-                "Global songs are blocked",
+                "Some songs are blocked",
                 report + "\n\nEnable allowFallback on the blocking entries?\n\n"
                 "Note: a blocking entry then falls through to the next valid "
                 "entry once its songs are used up, which is not necessarily the "
-                "global song."):
+                "blocked song."):
             return
         changed = scopes.enable_fallback_on_blockers(pack.entries, biomes)
         self.app.on_pack_entries_changed()
