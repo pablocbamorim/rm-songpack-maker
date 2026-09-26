@@ -109,6 +109,26 @@ class TestScopesFindBlockers(unittest.TestCase):
         blockers = scopes.find_blockers([glob], {"plains": "minecraft:overworld"})
         self.assertEqual(blockers, [])
 
+    def test_time_agnostic_place_entry_is_swept_across_time_tokens(self):
+        # A DAY+forest entry above a plain forest entry blocks the latter
+        # during DAY. The old blocker check never set a time flag, so it
+        # missed this valid blocking situation.
+        day_forest = mk(songs=["DaySong"], selected={C.CATEGORY_TIME: {"DAY"}},
+                        biomes=[("forest", False)])
+        any_time_forest = mk(songs=["AnyTimeSong"], biomes=[("forest", False)])
+        blockers = scopes.find_blockers(
+            [day_forest, any_time_forest], {"forest": "minecraft:overworld"})
+        self.assertEqual(len(blockers), 1)
+        self.assertIn("forest at DAY", blockers[0].biomes)
+
+    def test_entry_with_both_axes_named_is_not_swept(self):
+        day_forest = mk(songs=["DaySong"], selected={C.CATEGORY_TIME: {"DAY"}},
+                        biomes=[("forest", False)])
+        self.assertFalse(scopes._is_reachability_candidate(day_forest))
+
+    def test_time_only_entry_is_not_swept(self):
+        day_only = mk(songs=["DaySong"], selected={C.CATEGORY_TIME: {"DAY"}})
+        self.assertFalse(scopes._is_reachability_candidate(day_only))
 
 class TestLogicalViewPositions(unittest.TestCase):
     def test_positions_follow_scope_sorted_order(self):
