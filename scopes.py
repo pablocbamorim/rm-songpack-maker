@@ -310,6 +310,14 @@ def enable_fallback_on_blockers(entries: List[Entry],
     return changed
 
 
+def _reason_label(entry: Entry) -> str:
+    """Label the kind of reachability sweep that produced this report."""
+    if (getattr(entry, "scope", C.SCOPE_NORMAL) == C.SCOPE_GLOBAL
+            and not _has_biome_condition(entry)):
+        return "Global"
+    return "Time-agnostic"
+
+
 def describe_blockers(entries: List[Entry], blockers: List[Blocker],
                       max_biomes: int = 6) -> str:
     """Plain-text report for a dialog."""
@@ -320,7 +328,7 @@ def describe_blockers(entries: List[Entry], blockers: List[Blocker],
         if len(item.biomes) > max_biomes:
             shown += f", +{len(item.biomes) - max_biomes} more"
         lines.append(
-            f"\u2022 Global '{item.scoped.display_name()}' is blocked by entry "
+            f"\u2022 {_reason_label(item.scoped)} '{item.scoped.display_name()}' is blocked by entry "
             f"#{index.get(item.blocker.id, '?')} '{item.blocker.display_name()}' "
             f"({condition_logic.summarize_entry(item.blocker, 50)}) in: {shown}")
     return "\n".join(lines)
