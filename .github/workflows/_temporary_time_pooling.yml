@@ -1,0 +1,17 @@
+name: Temporary time-pooling verification
+
+on:
+  push:
+    branches: [feat/time-axis-pooling]
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install PyYAML
+      - run: python -m py_compile time_pooling.py app_core.py settings_tab.py app_settings.py scopes.py
+      - run: python -m unittest test_time_pooling test_biome_pooling -v
