@@ -153,7 +153,7 @@ def save(folder: str, groups: List[Tuple[Entry, List[str]]]) -> Optional[str]:
 @dataclass
 class Blocker:
     """Entry ``blocker`` stops checked entry ``scoped`` from being reached in
-    the listed biome/time situations.
+    the listed biomes.
     """
     scoped: Entry
     blocker: Entry
@@ -179,50 +179,6 @@ def _has_biome_condition(entry: Entry) -> bool:
         for a in condition_logic.entry_atoms(entry)
     )
 
-
-#: Time-of-day tokens -- exactly one is always true in-game.
-_TIME_TOKENS = tuple(C.FIXED_CATEGORIES[C.CATEGORY_TIME]["options"])
-
-
-def _has_time_condition(entry: Entry) -> bool:
-    """Does this entry require a specific time of day in ANY way?"""
-    wanted = {t.upper() for t in _TIME_TOKENS}
-    return any(a.kind == conditions.KIND_FIXED and a.value.upper() in wanted
-               for a in condition_logic.entry_atoms(entry))
-
-
-def _time_scenarios(entry: Entry):
-    """Return no extra flag when time is pinned, otherwise test every time."""
-    if _has_time_condition(entry):
-        return [frozenset()]
-    return [frozenset({token}) for token in _TIME_TOKENS]
-
-
-def _where_label(biome: str, time_flags) -> str:
-    """Describe a checked biome/time situation for the blocker report."""
-    return biome if not time_flags else f"{biome} at {next(iter(time_flags))}"
-
-
-def _is_reachability_candidate(entry: Entry) -> bool:
-    """Return whether the reachability sweep should test this entry.
-
-    Global entries without a place are swept across biomes; place-specific
-    entries without a time condition are swept across all time tokens.
-    Default and time-only entries are deliberately excluded.
-    """
-    if not entry.songs:
-        return False
-    scope = getattr(entry, "scope", C.SCOPE_NORMAL)
-    if scope == C.SCOPE_DEFAULT:
-        return False
-    if scope == C.SCOPE_GLOBAL and not _has_biome_condition(entry):
-        return True
-    return _has_biome_condition(entry) and not _has_time_condition(entry)
-
-
-def has_checkable_entry(entries) -> bool:
-    """Is there anything ``find_blockers`` would actually sweep?"""
-    return any(_is_reachability_candidate(e) for e in entries)
 
 def biome_dimensions(custom_attributes: Optional[dict] = None) -> Dict[str, str]:
     """{biome: dimension id} for every biome the editor knows about (bundled
@@ -261,29 +217,28 @@ def find_blockers(entries: List[Entry],
     logical = entry_pools.logical_view(entries).entries
     found: Dict[Tuple[str, str], Blocker] = {}
     for scoped in logical:
-        if not _is_reachability_candidate(scoped):
+        if (getattr(scoped, "scope", C.SCOPE_NORMAL) != C.SCOPE_GLOBAL
+                or _has_biome_condition(scoped)):
             continue
         for atoms in _scenarios(scoped):
             manual = simulation.parse_manual("\n".join(atoms))
-            for time_flags in _time_scenarios(scoped):
-                for biome, dimension in biomes.items():
-                    state = simulation.make_state(
-                        biome, dimension, set(time_flags), manual)
-                    plan = simulation.build_plan(logical, state)
-                    if scoped.id not in plan.valid_ids:
-                        continue
-                    items = [i for i in plan.items if i.entry_id == scoped.id]
-                    if not items or any(i.reachable for i in items):
-                        continue
-                    blocker = next((e for e in logical
-                                    if e.id == plan.terminal_entry_id), None)
-                    if blocker is None:
-                        continue
-                    item = found.setdefault(
-                        (scoped.id, blocker.id), Blocker(scoped, blocker))
-                    where = _where_label(biome, time_flags)
-                    if where not in item.biomes:
-                        item.biomes.append(where)
+            for biome, dimension in biomes.items():
+                state = simulation.make_state(
+                    biome, dimension, set(), manual)
+                plan = simulation.build_plan(logical, state)
+                if scoped.id not in plan.valid_ids:
+                    continue
+                items = [i for i in plan.items if i.entry_id == scoped.id]
+                if not items or any(i.reachable for i in items):
+                    continue
+                blocker = next((e for e in logical
+                                if e.id == plan.terminal_entry_id), None)
+                if blocker is None:
+                    continue
+                item = found.setdefault(
+                    (scoped.id, blocker.id), Blocker(scoped, blocker))
+                if biome not in item.biomes:
+                    item.biomes.append(biome)
     return list(found.values())
 
 
@@ -328,7 +283,7 @@ def describe_blockers(entries: List[Entry], blockers: List[Blocker],
         if len(item.biomes) > max_biomes:
             shown += f", +{len(item.biomes) - max_biomes} more"
         lines.append(
-            f"\u2022 {_reason_label(item.scoped)} '{item.scoped.display_name()}' is blocked by entry "
+            f"\u2022 Global song '{item.scoped.display_name()}' is blocked by entry "
             f"#{index.get(item.blocker.id, '?')} '{item.blocker.display_name()}' "
             f"({condition_logic.summarize_entry(item.blocker, 50)}) in: {shown}")
     return "\n".join(lines)
