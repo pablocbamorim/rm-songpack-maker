@@ -42,6 +42,9 @@ DEFAULTS = {
     # song can play there (biome_pooling.py). The editor keeps its own entries in
     # songpack_source.yaml either way.
     "pool_overlapping_biomes": True,
+    # When saving, place-conditioned entries with no time-of-day condition
+    # are expanded into one per-time pool before biome pooling.
+    "expand_time_agnostic_songs": True,
 }
 
 
