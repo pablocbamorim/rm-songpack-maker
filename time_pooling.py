@@ -165,12 +165,13 @@ def expand_time_floaters(entries: List[Entry]) -> TimePoolingResult:
         for index in indices:
             token = _bare_time_token(logical[index])
             if token is not None:
-                sibling_by_key[(key, token)] = index
+                sibling_by_key.setdefault((key, token), index)
             elif _has_time_atom(logical[index]):
                 ambiguous_by_situation.add(key)
 
     remove = set()
     created_at: Dict[int, List[Entry]] = defaultdict(list)
+    late_sibling_warnings = set()
 
     for index, floater in enumerate(logical):
         if (floater.scope != C.SCOPE_NORMAL or not floater.songs
@@ -197,6 +198,12 @@ def expand_time_floaters(entries: List[Entry]) -> TimePoolingResult:
         for token in _TIME_TOKENS:
             sibling = sibling_by_key.get((key, token))
             if sibling is not None and sibling != index:
+                if sibling > index and token not in late_sibling_warnings:
+                    late_sibling_warnings.add(token)
+                    report.warnings.append(
+                        f"{condition_logic.summarize_entry(floater, 70)}: the "
+                        f"{token} sibling occurs later in priority order; merging "
+                        "into it can change reachability across intervening entries.")
                 working[sibling].songs = list(
                     dict.fromkeys(working[sibling].songs + floater.songs))
                 report.merged += 1
