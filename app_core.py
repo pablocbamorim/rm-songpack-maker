@@ -27,12 +27,14 @@ import customtkinter as ctk
 
 import constants as C
 import block_data
+import entry_pools
 import yaml_io
 import priority
 import condition_logic
 import conditions
 import biome_customization
 import biome_chart
+import case_splitting
 import mod_versions
 import app_settings
 import simulation
@@ -43,6 +45,7 @@ import case_grouping
 import scopes
 import pack_validation
 import biome_tag_platforms
+import biome_pooling
 import tag_groups
 from models import Songpack, Entry, BiomeCondition, DimensionCondition, BlockCondition
 
@@ -816,6 +819,8 @@ class _CTkBiomeList(ctk.CTkScrollableFrame):
 # ---------------------------------------------------------------------------
 # Tab 2: Music & Conditions
 # ---------------------------------------------------------------------------
+
+
 class LibraryTab(ctk.CTkFrame):
     # Prefix shown next to entries that have no trigger conditions set yet
     # (i.e. they'd "always match" -- usually a sign the user forgot to
@@ -1621,7 +1626,6 @@ class LibraryTab(ctk.CTkFrame):
         used = {b.value for b in entry.biomes if b.is_tag == is_tag}
         return [v for v in [*builtins, *custom] if v not in used]
 
-
     def _biome_color(self, value: str, is_tag: bool) -> str:
         """Colour for a biome or biome tag. A songpack override wins; a tag
         without one is the average of the colours of the biomes it contains
@@ -2286,13 +2290,14 @@ class LibraryTab(ctk.CTkFrame):
 
         # -- custom tag groups ----------------------------------------------
         row_group = _row(biome_body)
-        ctk.CTkLabel(row_group, text="Tag group:", font=_BODY).pack(side="left")
+        ctk.CTkLabel(row_group, text="Tag group:",
+                     font=_BODY).pack(side="left")
         self.tag_group_var = tk.StringVar()
         self.tag_group_combobox = ctk.CTkComboBox(
             row_group,
             variable=self.tag_group_var,
             values=sorted(self.app.biome_custom_tag_groups, key=str.lower)
-                or ["(define groups in Settings)"],
+            or ["(define groups in Settings)"],
             width=220,
             font=_BODY,
         )
@@ -2901,7 +2906,8 @@ class LibraryTab(ctk.CTkFrame):
             if not is_tag:
                 chosen = [tag for tag, var in tag_vars.items() if var.get()]
                 for tag in chosen:
-                    members = self.app.biome_custom_tag_members.setdefault(tag, [])
+                    members = self.app.biome_custom_tag_members.setdefault(
+                        tag, [])
                     if name not in members:
                         members.append(name)
                 if chosen:
@@ -3025,6 +3031,8 @@ class PriorityTab(ctk.CTkFrame):
                       command=lambda: self._nudge(1)).pack(side="left", padx=3)
         ctk.CTkButton(btns, text="Check global songs…", width=160, font=_BODY,
                       command=self._check_globals).pack(side="left", padx=3)
+        ctk.CTkButton(btns, text="Split OR conditions into cases…", width=220, font=_BODY,
+                      command=self._split_or_conditions).pack(side="left", padx=3)
 
         columns = ("idx", "song", "score", "summary", "fallback")
         self.tree = ttk.Treeview(
@@ -3053,20 +3061,33 @@ class PriorityTab(ctk.CTkFrame):
         # left alone, so do NOT replace it with priority.order_entries().
         priority.enforce_scope_order(self.app.pack.entries)
         labels = _case_labels(self.app.pack)
-        for i, entry in enumerate(self.app.pack.entries, start=1):
-            name = entry.display_name()
-            if entry.id in labels:          # one of several cases of a song
-                name += f"  [{labels[entry.id]}]"
-            if entry.scope != C.SCOPE_NORMAL:
-                name += f"  [{entry.scope}]"
-            if not entry.has_any_condition():
+        # One row per LOGICAL entry (entry_pools.logical_view): adjacent
+        # editor entries with identical rules are one YAML entry, i.e. ONE
+        # priority slot with a song pool, so that is what this list shows.
+        # The iid is the id of the run's first real entry; "#" is that entry's
+        # position in the editor's own list, the number the simulator quotes.
+        view = entry_pools.logical_view(self.app.pack.entries)
+        for logical in view.entries:
+            pool = list(dict.fromkeys(logical.songs))
+            name = logical.display_name()
+            if len(pool) > 1:
+                extra = ", ".join(pool[1:4])
+                if len(pool) > 4:
+                    extra += f", +{len(pool) - 4} more"
+                name = f"{pool[0]}  +  {extra}"
+            if logical.id in labels:        # one of several cases of a song
+                name += f"  [{labels[logical.id]}]"
+            if logical.scope != C.SCOPE_NORMAL:
+                name += f"  [{logical.scope}]"
+            if not logical.has_any_condition():
                 name = LibraryTab.WARNING_PREFIX + name
             self.tree.insert(
-                "", "end", iid=entry.id,
+                "", "end", iid=logical.id,
                 values=(
-                    i, name, priority.score_entry(entry),
-                    condition_logic.summarize_entry(entry),
-                    "yes" if entry.allow_fallback else "no",
+                    view.positions.get(logical.id, ""), name,
+                    priority.score_entry(logical),
+                    condition_logic.summarize_entry(logical),
+                    "yes" if logical.allow_fallback else "no",
                 ),
             )
         if selected and self.tree.exists(selected[0]):
@@ -3115,6 +3136,47 @@ class PriorityTab(ctk.CTkFrame):
             f"allowFallback enabled on {len(changed)} entr"
             f"{'y' if len(changed) == 1 else 'ies'}.")
 
+    def _split_or_conditions(self):
+        """Split every OR'd condition group into AND-only cases and merge
+        cases with identical conditions, across the whole pack, into one song
+        pool (case_splitting.merge_split_pack).
+
+        The merged pools are then expanded again into one Entry per song
+        (entry_pools.expand_song_pools): Music & Conditions is one row per
+        song, so a song that joined a pool simply gets its own case there.
+        The expanded entries stay adjacent, so save_songpack writes them as
+        the single YAML song pool. One-shot and not undoable, so it confirms
+        first; merge_split_pack works on copies, so the preview costs nothing.
+        """
+        pack = self.app.pack
+        if not pack.entries:
+            return
+        result = case_splitting.merge_split_pack(pack.entries)
+        pooled = sum(1 for e in result.entries if len(e.songs) > 1)
+        note = (f"\n\n{len(result.skipped)} entr"
+                f"{'y' if len(result.skipped) == 1 else 'ies'} would produce more than "
+                f"{case_splitting.MAX_CASES_PER_ENTRY} cases and are left unchanged."
+                if result.skipped else "")
+        if not messagebox.askyesno(
+                "Split OR conditions into cases",
+                f"{pooled} shared song pool(s) will be formed.{note}\n\n"
+                "Songs with identical conditions and flags are saved as one "
+                "pool, even when they came from different entries; each song "
+                "keeps its own row and gets a case for it. This cannot be "
+                "undone. Continue?"):
+            return
+        pack.entries = entry_pools.expand_song_pools(result.entries)
+        priority.enforce_scope_order(pack.entries)
+        # Every entry id changed, so drop the Music & Conditions selection.
+        lib = self.app.library_tab
+        lib.selected_entry_ids, lib.selected_entry_id = [], None
+        lib._clear_editor(
+            "Select a song from the list on the left to configure what makes it play.")
+        self.app.on_pack_entries_changed()
+        self.app.set_status(
+            f"Split OR conditions: {len(pack.entries)} entries, {pooled} shared "
+            "song pool(s) (saved as one YAML entry each).")
+
     def _auto_arrange(self):
         self.app.pack.entries = priority.auto_priority_order(
             self.app.pack.entries)
@@ -3129,17 +3191,25 @@ class PriorityTab(ctk.CTkFrame):
         if not sel:
             return
         iid = sel[0]
-        entries = self.app.pack.entries
-        idx = next((i for i, e in enumerate(entries) if e.id == iid), None)
+        # A row is a whole run of entries (one YAML song pool): move the run,
+        # never one member out of it.
+        groups = entry_pools.merge_groups(self.app.pack.entries)
+        idx = next((i for i, g in enumerate(groups) if g[0].id == iid), None)
         if idx is None:
             return
         new_idx = idx + direction
-        if 0 <= new_idx < len(entries):
-            entries[idx], entries[new_idx] = entries[new_idx], entries[idx]
+        if 0 <= new_idx < len(groups):
+            groups[idx], groups[new_idx] = groups[new_idx], groups[idx]
+            self.app.pack.entries = [e for g in groups for e in g]
             self.app.mark_dirty()
             self.refresh()
-            self.tree.selection_set(iid)
-            self.tree.see(iid)
+            # The moved run may have merged with a neighbour of equal rules,
+            # which changes its row id; look the row up again.
+            row = entry_pools.logical_view(
+                self.app.pack.entries).rep_of.get(iid, iid)
+            if self.tree.exists(row):
+                self.tree.selection_set(row)
+                self.tree.see(row)
 
     def _on_press(self, event):
         self._drag_start_iid = self.tree.identify_row(event.y)
@@ -3157,10 +3227,16 @@ class PriorityTab(ctk.CTkFrame):
         self._drag_start_iid = None
 
     def _sync_order_from_tree(self):
-        order_ids = self.tree.get_children("")
-        id_to_entry = {e.id: e for e in self.app.pack.entries}
-        self.app.pack.entries = [id_to_entry[i]
-                                 for i in order_ids if i in id_to_entry]
+        # Rows are runs of entries (logical entries), so expand each row back
+        # into its real members, in the order the rows now have.
+        members = entry_pools.logical_view(self.app.pack.entries).members
+        reordered = []
+        for iid in self.tree.get_children(""):
+            reordered.extend(members.get(iid, []))
+        placed = {e.id for e in reordered}
+        reordered.extend(e for e in self.app.pack.entries
+                         if e.id not in placed)      # never lose an entry
+        self.app.pack.entries = reordered
         self.app.mark_dirty()
         self.refresh()
 
@@ -3206,6 +3282,10 @@ class App(ctk.CTk):
         # actions flip it, and _on_close_window/action_new_songpack/
         # action_load_config for where it's checked or reset.
         self._dirty = False
+        # What the last save-time biome pooling did (biome_pooling.PoolingReport),
+        # or None when it was off / has not run. Read for the status line and
+        # the "Saved" dialog.
+        self.last_pooling_report = None
 
         # Editor-wide preferences are loaded before the tabs are built so
         # SettingsTab reads the persisted values on construction.
@@ -3437,6 +3517,50 @@ class App(ctk.CTk):
             self.pack_data.minecraft_version, self.pack_data.mod_version)
         return version
 
+    def output_pooler(self):
+        """The save-time "entries as they should be WRITTEN" hook for
+        yaml_io.save_songpack(pooling=...), or None when the Settings switch is
+        off. It expands entries that overlap on the same biomes into per-biome
+        song pools (biome_pooling.py); the editor's own entries are untouched.
+        If the target build predates allowFallback, the original entries that
+        stay below the pools are left as they were (the flag is not added).
+        """
+        if not self.settings.get("pool_overlapping_biomes", True):
+            self.last_pooling_report = None
+            return None
+        fallback_ok = mod_versions.supports(
+            self.effective_mod_version(), "allow_fallback")
+        biomes = list(biome_customization.load_app_dimensions())
+
+        def pool(entries):
+            result = biome_pooling.pool_overlapping_biomes(
+                entries, biomes=biomes, tags_of=simulation.biome_tags,
+                residual_fallback=fallback_ok)
+            self.last_pooling_report = result.report
+            return result.entries
+        return pool
+
+    def _pooling_note(self) -> str:
+        report = self.last_pooling_report
+        if report is None or not report.pools:
+            return ""
+        return (f" (pooled {report.pools} biome song pool(s) from overlapping "
+                "entries; your own entries are kept in "
+                f"{yaml_io.SOURCE_FILENAME})")
+
+    def _pooling_details(self) -> str:
+        report = self.last_pooling_report
+        if report is None or not (report.groups or report.skipped
+                                  or report.warnings):
+            return ""
+        lines = [f"\u2022 {text}" for text in
+                 report.groups + report.skipped + report.warnings]
+        text = "\n\nBiome pooling:\n" + "\n".join(lines)
+        if report.pools:
+            text += ("\n\nYour own entries are kept in "
+                     f"{os.path.join(self.current_save_folder or '', yaml_io.SOURCE_FILENAME)}.")
+        return text
+
     def on_target_changed(self):
         """The Minecraft/mod version picker moved, so the condition editor
         has to re-gate itself against the new target.
@@ -3635,7 +3759,8 @@ class App(ctk.CTk):
             return
         try:
             path = yaml_io.save_songpack(
-                self.pack_data, folder, copy_music_from=None)
+                self.pack_data, folder, copy_music_from=None,
+                pooling=self.output_pooler())
             biome_customization.save(
                 folder, self.biome_custom_biomes, self.biome_custom_tags,
                 self.biome_custom_attributes, self.biome_custom_tag_members,
@@ -3648,14 +3773,15 @@ class App(ctk.CTk):
         self.settings["last_songpack_folder"] = folder
         self.save_settings()
         self.mark_clean()
-        self.set_status(f"Saved to {path}")
+        self.set_status(f"Saved to {path}{self._pooling_note()}")
         messagebox.showinfo(
             "Saved",
             f"Songpack saved to:\n{path}\n\n"
             f"Biome customization saved to:\n"
             f"{os.path.join(folder, biome_customization.CONFIG_FILENAME)}\n\n"
             f"Target build saved to:\n"
-            f"{os.path.join(folder, mod_versions.TARGET_FILENAME)}",
+            f"{os.path.join(folder, mod_versions.TARGET_FILENAME)}"
+            + self._pooling_details(),
         )
 
     def action_quick_save(self) -> None:
@@ -3681,7 +3807,8 @@ class App(ctk.CTk):
         folder = self.current_save_folder
         try:
             path = yaml_io.save_songpack(
-                self.pack_data, folder, copy_music_from=None)
+                self.pack_data, folder, copy_music_from=None,
+                pooling=self.output_pooler())
             biome_customization.save(
                 folder, self.biome_custom_biomes, self.biome_custom_tags,
                 self.biome_custom_attributes, self.biome_custom_tag_members,
@@ -3693,7 +3820,7 @@ class App(ctk.CTk):
         self.settings["last_songpack_folder"] = folder
         self.save_settings()
         self.mark_clean()
-        self.set_status(f"Saved to {path}")
+        self.set_status(f"Saved to {path}{self._pooling_note()}")
 
     def _confirm_pack_issues(self) -> bool:
         """Sanity check before writing (pack_validation.py): songless or

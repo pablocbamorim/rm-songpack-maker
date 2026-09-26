@@ -71,9 +71,15 @@
     "HIDDEN_FROM_LOCATOR_SELECTION": [],
     "IS_AQUATIC": [
       "cold_ocean",
+      "deep_cold_ocean",
+      "deep_frozen_ocean",
+      "deep_lukewarm_ocean",
+      "deep_ocean",
       "frozen_ocean",
+      "frozen_river",
       "lukewarm_ocean",
       "ocean",
+      "river",
       "warm_ocean"
     ],
     "IS_AQUATIC_ICY": [
@@ -81,8 +87,15 @@
       "frozen_ocean",
       "frozen_river"
     ],
-    "IS_BADLANDS": [],
-    "IS_BEACH": [],
+    "IS_BADLANDS": [
+      "badlands",
+      "eroded_badlands",
+      "wooded_badlands"
+    ],
+    "IS_BEACH": [
+      "beach",
+      "snowy_beach"
+    ],
     "IS_BIRCH_FOREST": [
       "birch_forest",
       "old_growth_birch_forest"
@@ -169,7 +182,12 @@
       "dark_forest",
       "pale_garden"
     ],
-    "IS_DEEP_OCEAN": [],
+    "IS_DEEP_OCEAN": [
+      "deep_cold_ocean",
+      "deep_frozen_ocean",
+      "deep_lukewarm_ocean",
+      "deep_ocean"
+    ],
     "IS_DENSE_VEGETATION": [
       "bamboo_jungle",
       "dark_forest",
@@ -235,7 +253,13 @@
       "windswept_savanna",
       "wooded_badlands"
     ],
-    "IS_END": [],
+    "IS_END": [
+      "end_barrens",
+      "end_highlands",
+      "end_midlands",
+      "small_end_islands",
+      "the_end"
+    ],
     "IS_FLORAL": [
       "cherry_grove",
       "flower_forest",
@@ -245,8 +269,21 @@
     "IS_FLOWER_FOREST": [
       "flower_forest"
     ],
-    "IS_FOREST": [],
-    "IS_HILL": [],
+    "IS_FOREST": [
+      "birch_forest",
+      "dappled_forest",
+      "dark_forest",
+      "flower_forest",
+      "forest",
+      "grove",
+      "old_growth_birch_forest",
+      "pale_garden"
+    ],
+    "IS_HILL": [
+      "windswept_forest",
+      "windswept_gravelly_hills",
+      "windswept_hills"
+    ],
     "IS_HOT": [
       "badlands",
       "bamboo_jungle",
@@ -294,7 +331,11 @@
       "frozen_peaks",
       "ice_spikes"
     ],
-    "IS_JUNGLE": [],
+    "IS_JUNGLE": [
+      "bamboo_jungle",
+      "jungle",
+      "sparse_jungle"
+    ],
     "IS_JUNGLE_TREE": [
       "jungle",
       "sparse_jungle",
@@ -327,13 +368,23 @@
     "IS_MUSHROOM": [
       "mushroom_fields"
     ],
-    "IS_NETHER": [],
+    "IS_NETHER": [
+      "basalt_deltas",
+      "crimson_forest",
+      "nether_wastes",
+      "soul_sand_valley",
+      "warped_forest"
+    ],
     "IS_NETHER_FOREST": [
       "crimson_forest",
       "warped_forest"
     ],
     "IS_OCEAN": [
       "cold_ocean",
+      "deep_cold_ocean",
+      "deep_frozen_ocean",
+      "deep_lukewarm_ocean",
+      "deep_ocean",
       "frozen_ocean",
       "lukewarm_ocean",
       "ocean",
@@ -349,7 +400,64 @@
       "end_highlands",
       "end_midlands"
     ],
-    "IS_OVERWORLD": [],
+    "IS_OVERWORLD": [
+      "badlands",
+      "bamboo_jungle",
+      "beach",
+      "birch_forest",
+      "cherry_grove",
+      "cold_ocean",
+      "dappled_forest",
+      "dark_forest",
+      "deep_cold_ocean",
+      "deep_dark",
+      "deep_frozen_ocean",
+      "deep_lukewarm_ocean",
+      "deep_ocean",
+      "desert",
+      "dripstone_caves",
+      "eroded_badlands",
+      "flower_forest",
+      "forest",
+      "frozen_ocean",
+      "frozen_peaks",
+      "frozen_river",
+      "grove",
+      "ice_spikes",
+      "jagged_peaks",
+      "jungle",
+      "lukewarm_ocean",
+      "lush_caves",
+      "mangrove_swamp",
+      "meadow",
+      "mushroom_fields",
+      "ocean",
+      "old_growth_birch_forest",
+      "old_growth_pine_taiga",
+      "old_growth_spruce_taiga",
+      "pale_garden",
+      "plains",
+      "river",
+      "savanna",
+      "savanna_plateau",
+      "snowy_beach",
+      "snowy_plains",
+      "snowy_slopes",
+      "snowy_taiga",
+      "sparse_jungle",
+      "stony_peaks",
+      "stony_shore",
+      "sulfur_caves",
+      "sunflower_plains",
+      "swamp",
+      "taiga",
+      "warm_ocean",
+      "windswept_forest",
+      "windswept_gravelly_hills",
+      "windswept_hills",
+      "windswept_savanna",
+      "wooded_badlands"
+    ],
     "IS_PLAINS": [
       "plains",
       "sunflower_plains"
@@ -376,7 +484,10 @@
       "windswept_gravelly_hills",
       "windswept_savanna"
     ],
-    "IS_RIVER": [],
+    "IS_RIVER": [
+      "frozen_river",
+      "river"
+    ],
     "IS_SANDY": [
       "badlands",
       "beach",
@@ -384,7 +495,11 @@
       "eroded_badlands",
       "wooded_badlands"
     ],
-    "IS_SAVANNA": [],
+    "IS_SAVANNA": [
+      "savanna",
+      "savanna_plateau",
+      "windswept_savanna"
+    ],
     "IS_SAVANNA_TREE": [
       "savanna",
       "savanna_plateau",
@@ -450,7 +565,12 @@
       "mangrove_swamp",
       "swamp"
     ],
-    "IS_TAIGA": [],
+    "IS_TAIGA": [
+      "old_growth_pine_taiga",
+      "old_growth_spruce_taiga",
+      "snowy_taiga",
+      "taiga"
+    ],
     "IS_TEMPERATE": [
       "beach",
       "birch_forest",
@@ -488,7 +608,11 @@
       "swamp"
     ],
     "IS_TREE_CONIFEROUS": [
-      "grove"
+      "grove",
+      "old_growth_pine_taiga",
+      "old_growth_spruce_taiga",
+      "snowy_taiga",
+      "taiga"
     ],
     "IS_TREE_DECIDUOUS": [
       "birch_forest",
@@ -499,8 +623,16 @@
       "pale_garden",
       "windswept_forest"
     ],
-    "IS_TREE_JUNGLE": [],
-    "IS_TREE_SAVANNA": [],
+    "IS_TREE_JUNGLE": [
+      "bamboo_jungle",
+      "jungle",
+      "sparse_jungle"
+    ],
+    "IS_TREE_SAVANNA": [
+      "savanna",
+      "savanna_plateau",
+      "windswept_savanna"
+    ],
     "IS_UNDERGROUND": [
       "deep_dark",
       "dripstone_caves",

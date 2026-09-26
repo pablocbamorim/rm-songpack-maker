@@ -150,6 +150,8 @@ If a filename contains spaces, accents or other characters that can be troubleso
 
 **Song pools on save:** entries that sit next to each other in the priority order and have identical conditions and flags are written as one YAML entry with several songs. Entries that are *not* adjacent are never merged, because that would move a song above the entries between them. The simulator uses exactly this saved shape. After saving and reloading, such a run appears as a single pool entry.
 
+**Overlapping biome tags on save:** ReactiveMusic plays the first valid entry, so when two entries with the same conditions overlap on a biome (say `["DAY", "BIOMETAG=IS_TEMPERATE_OVERWORLD"]` and `["DAY", "BIOMETAG=IS_PLAINS"]` in plains), only the first one's songs would play there. On save, the editor expands such overlaps into per-biome entries (`BIOME=minecraft:plains || BIOME=minecraft:sunflower_plains`, with the songs of every entry that covers them) placed just before the original entries, which stay below them with `allowFallback` on for biomes the editor does not know (modded ones). Only entries with identical conditions and flags are combined, entries using `forceStop*`/`forceStart*` are left alone, and biomes whose tags have no member list in `default_biome_colors.json` cannot be expanded. Your own entries are not changed: the YAML you edit here is kept in `songpack_source.yaml` next to the saved file and is used while it still matches `ReactiveMusic.yaml`. If you edit `ReactiveMusic.yaml` by hand, your edit wins. Turn this off in **Settings** ("When saving, pool the songs of entries that overlap on the same biomes").
+
 **Important:** `Save Config…` currently does not copy the audio files. Make sure the referenced files are present in the songpack's `music` folder yourself.
 
 ### 4. Configure conditions
@@ -214,7 +216,7 @@ Your Songpack/
 └── songpack_target.json
 ```
 
-The second and third files are editor metadata: custom biome/biome-tag display colors, and the target Minecraft/mod version. A fourth, `songpack_scopes.json`, appears only when some entry is marked Global or Default. ReactiveMusic itself does not read any of them.
+The second and third files are editor metadata: custom biome/biome-tag display colors, and the target Minecraft/mod version. A fourth, `songpack_scopes.json`, appears only when some entry is marked Global or Default. A fifth, `songpack_source.yaml`, appears only when biome pooling changed the saved YAML (see above). ReactiveMusic itself does not read any of them.
 
 After writing, the editor reloads the YAML and verifies that it means the same thing as what is in the editor (conditions, song pools, flags, unknown keys and priority order). A mismatch is reported instead of being silently accepted.
 

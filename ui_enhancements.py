@@ -121,23 +121,38 @@ def install(app):
         if not os.path.isfile(yaml_path):
             return
         try:
-            reloaded = yaml_io.load_songpack(path)
+            # 1. The file ReactiveMusic reads, read WITHOUT the editable-source
+            #    sidecar: it must be exactly the entries the save meant to write
+            #    (the editor's own, or biome_pooling's compiled form).
+            pooler = getattr(app, "output_pooler", None)
+            pooling = pooler() if callable(pooler) else None
+            written = yaml_io.load_songpack(path, use_source=False)
+            compiled = pooling(app.pack.entries) if pooling else app.pack.entries
             # Entries with identical conditions are written as one song
             # pool, so compare against the merged grouping, not the raw list.
-            expected = yaml_io.expected_songs_after_save(app.pack)
-            actual = [s for e in reloaded.entries for s in e.songs]
+            expected = yaml_io.expected_songs_after_save(app.pack, pooling)
+            actual = [s for e in written.entries for s in e.songs]
             if actual != expected:
                 raise ValueError(
                     "Saved YAML does not contain the same song entries as the editor.")
             # Songs alone are not enough: compare what the file MEANS (canonical
             # conditions, song pools, flags, scope, unknown fields, and the
             # priority order of the entries as ReactiveMusic will read them).
-            if (entry_pools.semantic_snapshot(app.pack.entries)
-                    != entry_pools.semantic_snapshot(reloaded.entries)):
+            if (entry_pools.semantic_snapshot(compiled)
+                    != entry_pools.semantic_snapshot(written.entries)):
                 raise ValueError(
                     "The saved YAML does not mean the same thing as the editor: "
                     "an entry's conditions, flags, song pool or priority position "
                     "differ after reloading it.")
+            # 2. What the editor gets back on the next load (the authored
+            #    entries from songpack_source.yaml when pooling rewrote the YAML).
+            reloaded = yaml_io.load_songpack(path)
+            if (entry_pools.semantic_snapshot(app.pack.entries)
+                    != entry_pools.semantic_snapshot(reloaded.entries)):
+                raise ValueError(
+                    "Reloading the saved songpack would not give back the "
+                    "entries you are editing (songpack_source.yaml does not "
+                    "match).")
             if app.pack.extra_top_level != reloaded.extra_top_level:
                 raise ValueError(
                     "Top-level keys that the editor does not edit were not "
@@ -145,7 +160,8 @@ def install(app):
         except Exception as exc:
             messagebox.showerror("Save verification failed", str(exc))
             return
-        app.set_status(f"Saved and verified: {yaml_path}")
+        note = getattr(app, "_pooling_note", lambda: "")()
+        app.set_status(f"Saved and verified: {yaml_path}{note}")
 
     app.action_load_music_folder = load_music_folder
     app.action_save_config = save_config

@@ -41,8 +41,12 @@ syncing:
   `BIOMETAG=` condition ("cases" of a tag). A tag case is a plain entry — songs
   added to a tag are *not* copied onto its biomes; the entry just matches all of
   them (the simulator resolves tags through the bundled membership table).
-- **Priority Order tab** shows `entries` in raw list order (= play priority:
-  first match wins, per the mod's own rules).
+- **Priority Order tab** shows the *logical* entries (`entry_pools.logical_view`)
+  in list order (= play priority: first match wins, per the mod's own rules):
+  a run of adjacent entries with identical rules is ONE row listing its song pool,
+  and Move Up/Down / drag move the whole run. Its `#` is the first member's
+  position in `app.pack.entries`, so numbers can skip (the simulator quotes the
+  same numbers). Songs whose flags differ are different rules and stay separate rows.
 
 Both groupings are *computed on the fly* from entry data (see
 `case_grouping.py`) — there's no separate "case id". Edit from either view
@@ -79,7 +83,7 @@ songs above the entries between them). `entry_pools.logical_view()` is the pack
 exactly as ReactiveMusic will read it; the simulator, the blocker check and
 save verification all use it, never the raw list, so a prediction and the saved
 file cannot disagree.
-When a YAML entry contains multiple songs, `entry_pools.expand_song_pools()` restores the editor's one-Entry-per-song view before a music-folder scan. `entry_pools.reconcile_music_folder_entries()` then adds only genuinely missing audio stems; save-time `merge_equivalent_entries()` can still collapse adjacent equivalent rows back into a YAML song pool.
+When a YAML entry contains multiple songs, `entry_pools.expand_song_pools()` restores the editor's one-Entry-per-song view before a music-folder scan. `entry_pools.reconcile_music_folder_entries()` then adds only genuinely missing audio stems; save-time `merge_equivalent_entries()` can still collapse adjacent equivalent rows back into a YAML song pool. **The editor's list is always one song per `Entry`:** `yaml_io.load_songpack()` runs `expand_song_pools()` on every load (after the scope sidecar is applied, since that is keyed by the pooled songs), and `PriorityTab._split_or_conditions` does the same after merging. Pools therefore only exist in the saved file and in `logical_view()`; the expanded entries stay adjacent, so a load -> save round trip writes the same YAML. Known gap: "Edit songs…", "Mix into this entry" and the biome case editor's song list can still put several songs on one in-memory `Entry` until the next load (its row then shows the pool).
 
 ## Startup chain
 
@@ -159,7 +163,8 @@ Saving and loading are **not symmetrical**: some files are handled inside
 | `songpack_scopes.json` | `scopes.save`, called from `yaml_io.save_songpack` (deleted when nothing is scoped) | `scopes.apply_to_entries`, called from `yaml_io.load_songpack` | Global/default markers. |
 | `biome_customization.json` | `biome_customization.save`, called from `App.action_save_config` | `biome_customization.load` / `load_attributes` / `load_tag_members` / `load_tag_groups`, called from `App.action_load_config` and `_restore_last_songpack` | Custom biome/tag colours and chart attributes, plus `biome_tag_members` additions and editor-only `biome_tag_groups`. These memberships are merged into `simulation` via `simulation.set_custom_tag_members()`. |
 | `songpack_target.json` | `mod_versions.save`, called from `App.action_save_config` | `mod_versions.load` + `apply_to_pack`, from the same load paths | Target Minecraft/mod version and platform. |
-| `~/.rm-songpack-maker/settings.json` | `app_settings.save` | `app_settings.load` | Editor prefs, not songpack data: `dark_theme`, `double_click_preview`, `preview_volume`, `last_songpack_folder`, `show_empty_biome_tags`. |
+| `songpack_source.yaml` | `yaml_io.save_songpack` (`_write_source_sidecar`; deleted when the YAML equals the editor's entries) | `yaml_io.load_songpack` (`_authored_entries`), only if `compiledSha256` matches the YAML's entries | The author's own entries when biome pooling rewrote the YAML. Editor-only; a hand-edited YAML makes it stale and it is ignored. |
+| `~/.rm-songpack-maker/settings.json` | `app_settings.save` | `app_settings.load` | Editor prefs, not songpack data: `dark_theme`, `double_click_preview`, `preview_volume`, `last_songpack_folder`, `show_empty_biome_tags`, `pool_overlapping_biomes`. |
 | `default_biome_colors.json` (bundled) | Nothing at runtime | `biome_customization` (cached) | Read-only from the UI. The `save_app_default_color` / `remove_app_default_color` helpers still exist but no screen calls them. |
 
 `save_songpack` is called with `copy_music_from=None`, so audio is never copied.
@@ -171,21 +176,23 @@ Saving and loading are **not symmetrical**: some files are handled inside
 | File | Purpose |
 |---|---|
 | `models.py` | `Entry`, `Songpack`, `BiomeCondition`, `DimensionCondition`, `BlockCondition` dataclasses. The single source of truth for songpack state. |
-| `constants.py` | Fixed event categories (Special/Time/Weather/.../Combat) straight from `MAKING_SONGPACKS.md`, biome/biome-tag name lists, rarity-score weights. |
+| `constants.py` | Fixed event categories (Special/Time/Weather/Height/**Underwater**/Entities/Actions/Location/Combat) straight from `MAKING_SONGPACKS.md`, biome/biome-tag name lists, rarity-score weights. `UNDERWATER` is its own `CATEGORY_UNDERWATER` (separate from `CATEGORY_HEIGHT`) so it is weighted independently. Rarity weights are now flat per-group values (`BIOME_GROUP_WEIGHT`, `DIMENSION_GROUP_WEIGHT`, `BLOCK_GROUP_WEIGHT`, per-category `CATEGORY_WEIGHTS`) — see the long comment above `CATEGORY_WEIGHTS` for why the old "divide by OR count" approach caused songs pooled across two biomes to silently score lower than exclusive ones. |
 | `condition_logic.py` | Two-way conversion: `Entry`'s structured checkbox/list state ⇄ the raw `events: [...]` YAML string array. `build_events()` and `parse_events()` (lossless: see above), plus `entry_clauses()`/`entry_atoms()`/`canonical_events()`. |
 | `conditions.py` | The canonical condition expression (AND of ORs of `Atom`s), the single `soft_match` for `BIOME=`/`DIM=`, canonical/implication helpers. No dependencies on models or the GUI. **Read this first** when a condition behaves differently in two views. |
 | `entry_pools.py` | Logical entries: which neighbouring editor entries are saved as one song pool (`merge_groups`, `logical_view`, `semantic_snapshot`). |
 | `pack_validation.py` | Save-time sanity report (no songs, no conditions, bad `forceChance`, entries that can never play). Warnings only; never edits the pack. |
 | `case_grouping.py` | Groups `pack.entries` by song ("cases of a song"), by biome ("cases of a biome", soft-matching, reading every atom incl. verbatim items) or, with `is_tag=True`, by biome tag ("cases of a tag"). Also song-pool helpers (`pool_songs`, `cases_containing_song`, `secondary_songs`). Pure functions over the entries list. |
 | `scopes.py` | "Global" / "default" songs. `Entry.scope` is editor-only metadata persisted in `songpack_scopes.json` (keyed by an entry's events + songs, so it survives a YAML round trip). Also the blocker check (`find_blockers`, `enable_fallback_on_blockers`): which entries above a global song stop it being reached in which biomes. No special YAML output: a global/default entry is a plain entry with no `BIOME=`, pinned below normal entries. |
-| `priority.py` | Rarity scoring (`score_entry`) that drives "Auto-arrange by rarity", plus `find_broader_fallbacks` (the "mix into this entry" variety helper). |
+| `priority.py` | Rarity scoring (`score_entry`) that drives "Auto-arrange by rarity", plus `find_broader_fallbacks` (the "mix into this entry" variety helper). `score_entry` now adds one flat weight per *distinct condition group* touched (time, biome, height, underwater, weather, dimension, block, "other") — once each, regardless of how many options are in that group or whether they are OR'd or AND'd. `atom_group(atom)` maps any `Atom` to its scoring group; `group_weight(group)` looks up its flat weight from `constants`. |
 | `mod_versions.py` | Feature-gate table: which ReactiveMusic mod version introduced which condition/flag, Minecraft-version → mod-version lookup, and the `songpack_target.json` sidecar (editor-only metadata, never written into the actual YAML). |
 | `tag_groups.py` | Pure custom biome-tag group logic: derived `applied_groups`, `add_group`, and `remove_group` without storing group state on entries. |
+| `case_splitting.py` | One-shot pack restructuring tool: expands each entry's OR'd condition groups into fully AND-only cases (Cartesian product across all OR'd groups), then merges any cases across the **whole pack** (not just adjacent neighbours) that land on the same canonical condition set (`entry_pools.merge_key`) into one shared song pool. `split_entry_to_cases(entry)` builds the cases for one entry; `merge_split_pack(entries)` does the full transform and returns a `SplitResult`. Invoked from `PriorityTab._split_or_conditions`; never runs automatically. `merge_split_pack` returns merged pools; the caller re-expands them with `entry_pools.expand_song_pools` so each song keeps its own row/case in Music & Conditions. Generated cases are deep-copied (no shared condition objects) and the result is sorted scope tier first, then rarity. |
+| `biome_pooling.py` | **Output-time** transform, applied by `yaml_io.save_songpack(pooling=...)` (see the gotcha below): `pool_overlapping_biomes(entries, biomes=, tags_of=, residual_fallback=)` works on `entry_pools.logical_view` and returns the entries as they should be *written*. Entries with an identical situation (same non-place clauses, flags, scope, extra fields) whose BIOME=/BIOMETAG= coverage overlaps on a known biome are expanded: biomes are partitioned by which entries cover them, and each partition becomes one `BIOME=minecraft:a \|\| BIOME=minecraft:b …` entry with the union of its contributors' songs. The originals stay in place below as residuals (for modded biomes) with `allowFallback` on. Groups with forceStop*/forceStart* flags, global/default entries and entries with a place+situation OR clause are left alone. The tag lookup and biome universe are injected (`simulation.biome_tags`, bundled biome names), so it is pure and unit-testable. Returns a `PoolingResult` (entries + `PoolingReport` with pools/residuals/skipped/warnings). Never edits its input. |
 
 ### 2. Persistence / I/O — read these for load/save behavior
 | File | Purpose |
 |---|---|
-| `yaml_io.py` | Load/save `ReactiveMusic.yaml`. Validates types on load (`SongpackFormatError` lists every problem; nothing is truthiness-coerced and a malformed entries list can no longer load as an empty pack), preserves unknown per-entry and top-level keys (`Entry.extra_fields`, `Songpack.extra_top_level`), writes song pools via `entry_pools`, and matches the mod author's preferred YAML style (quoted strings, indented lists). |
+| `yaml_io.py` | Load/save `ReactiveMusic.yaml`. `save_songpack(pooling=...)` writes the entries returned by a `biome_pooling` hook and, when that changed the YAML, `songpack_source.yaml` (authored entries + SHA-256 of what was written); `load_songpack(use_source=True)` swaps the authored entries back in only while that hash matches. Validates types on load (`SongpackFormatError` lists every problem; nothing is truthiness-coerced and a malformed entries list can no longer load as an empty pack), preserves unknown per-entry and top-level keys (`Entry.extra_fields`, `Songpack.extra_top_level`), writes song pools via `entry_pools`, and matches the mod author's preferred YAML style (quoted strings, indented lists). `load_songpack` expands song pools into one `Entry` per song (`entry_pools.expand_song_pools`), after `scopes.apply_to_entries`. |
 | `biome_customization.py` | Two *separate* colour/attribute stores: per-songpack overrides (`biome_customization.json` next to a songpack) vs. bundled app defaults (`default_biome_colors.json` next to this script, shipped with the editor). Also owns the biome chart's temperature/humidity/erosion/weirdness attribute data, the bundled **tag membership** (`load_app_tag_members`, `tag_members`), everything derived from it, and persistence of editor-only `biome_tag_groups`. |
 | `default_biome_colors.json` | The bundled defaults data file itself. Keys: `biomes` (name → colour), `biome_tags` (**tag → list of the biomes it contains** — tags have no colour of their own), `biome_dimensions`, `biome_attributes` (chart data). Rarely needs to be read in full — just know what the keys are. |
 | `audio_io.py` | Pure audio logic (no tkinter): probing, waveform peak extraction, trim/export via `soundfile`+`numpy`. Safe to call from worker threads. |
@@ -199,7 +206,7 @@ Saving and loading are **not symmetrical**: some files are handled inside
 ### 4. GUI — main window & tabs
 | File | Purpose |
 |---|---|
-| `app_core.py` | **The biggest file.** Defines `App` (main window, menu, tab container) and three of the five tabs directly: `InfoTab` (songpack metadata + target mod build), `LibraryTab` (a.k.a. "Music & Conditions" — the condition editor, by far the most complex UI: fixed-category checkboxes, biome/dimension/block pickers, the Biome Map chart, case tabs, multi-select editing), `PriorityTab` (drag-reorderable priority list). Also has shared layout helpers (`_section`, `_flow_group`, typography constants). |
+| `app_core.py` | **The biggest file.** Defines `App` (main window, menu, tab container) and three of the five tabs directly: `InfoTab` (songpack metadata + target mod build), `LibraryTab` (a.k.a. "Music & Conditions" — the condition editor, by far the most complex UI: fixed-category checkboxes, biome/dimension/block pickers, the Biome Map chart, case tabs, multi-select editing), `PriorityTab` (drag-reorderable priority list of logical entries, i.e. song pools as one row; also has "Split OR conditions into cases…" → `_split_or_conditions` which calls `case_splitting.merge_split_pack`). Also has shared layout helpers (`_section`, `_flow_group`, typography constants). |
 | `simulator_tab.py` | Tab 3, "Simulation Map" (three persistent columns: map · playlist · embedded case editor; `StepSlider` is its discrete situation slider): situation sliders (time/weather/height/underwater + collapsible extra conditions/manual facts) + the map + a playlist that imitates the mod + an embedded case editor, using `simulation.py` for all the actual logic. A selector above the map switches between the **Biomes** map and the **Biome tags** map (one `BiomeChart`, mode-dependent data). Everything below the map works on a *subject*: a biome name, or `"#" + tag`. |
 | `settings_tab.py` | Tab 5, "Settings": editor-wide preferences (dark theme, double-click preview) and the biome/tag colour list editor (reads/writes via `biome_customization.py`). |
 | `biome_chart.py` | The reusable "Biome Map" canvas widget (icons placed by temperature/humidity, shaped by erosion/weirdness). Used by both `LibraryTab` (editing one entry's biomes) and `simulator_tab.py` (situation preview) — it's handed callables, so it doesn't know about `Entry` or `Songpack` at all. Paints a gradient backdrop plus optional night/underwater/weather layers (`render_backdrop`, Pillow-rendered and cached). Optional hooks used by the simulator: `on_hover`, `tooltip_lines`, `action_labels`, `on_right_click`, `backdrop`. It has a bottom-right resize grip whose height is remembered in the module-level `_RESIZED_HEIGHT`. |
@@ -242,7 +249,10 @@ Two smaller suites live at the repo root: `test_fixes.py` (`priority.is_broader_
 `scopes` detection of biome conditions hidden in verbatim items, `entry_pools`
 positions after scope sorting, `yaml_io` top-level type validation) and
 `test_theme.py` (logo gradient and palette; the gradient tests are skipped without
-Pillow). From the repo root: `python -m unittest test_fixes test_theme -v`.
+Pillow). `test_case_splitting.py` covers the new rarity formula (group-based, not
+option-count-based) and `case_splitting.merge_split_pack` (OR expansion, Cartesian
+product, cross-pack merging, cap behaviour, flag isolation). `test_biome_pooling.py` covers `biome_pooling` (uses the bundled tag table and the simulator as oracle: every song of overlapping entries becomes reachable, modded biomes walk through the tag pools, situations/force flags/global entries are left alone, the savanna/savanna_plateau prefix case) and the `yaml_io` side (compiled YAML + sidecar, a hand-edited YAML beating a stale sidecar, stale sidecar removal, unchanged output with pooling off, scope of global entries). From the repo root:
+`python -m unittest test_fixes test_theme test_case_splitting test_biome_pooling -v`.
 
 ## Data flow for common tasks
 
@@ -299,6 +309,10 @@ evaluates it; `simulation.py` (`_tag_table`, `make_tag_state`) does the matching
 **"Auto-arrange / priority order is wrong":** `priority.py` (`score_entry`,
 `auto_priority_order`). `constants.py` has the tunable weights. Scope tiers (normal → global → default) are enforced by `priority.enforce_scope_order`, called from `PriorityTab.refresh` and `yaml_io.merge_equivalent_entries`.
 
+**"A song pooled across two biomes is unreachable in one of them because a single-biome exclusive song blocks it":** this is the classic OR-blocking problem. Equal rarity scores still result in one entry winning outright (whichever comes first in list order). The fix is `PriorityTab._split_or_conditions` → `case_splitting.merge_split_pack`: it expands OR'd groups into AND-only cases and merges cases across the whole pack that end up with identical conditions into one song pool. After the transform the two songs that both want "BIOME=desert" are adjacent entries with identical conditions (each song keeps its own row and case in Music & Conditions, because the handler runs `entry_pools.expand_song_pools` on the result), so `save_songpack` writes them as the same YAML entry and they genuinely share its rotation. Songs whose flags differ (e.g. `allowFallback`) are deliberately not merged: `merge_key` includes the flags. The button is on the Priority Order tab, confirms before running, and cannot be undone.
+
+**"Two entries with overlapping BIOMETAGs (same DAY etc.) only play the first entry's songs in the shared biomes":** this is an *output structure* problem, not a simulator one: the mod plays the first valid entry and equal-specificity entries cannot both win. `biome_pooling.pool_overlapping_biomes` expands the overlap into per-biome song pools (see its docstring for the rules and what it deliberately skips). Membership comes from `default_biome_colors.json` through `simulation.biome_tags`, so a tag whose list is empty there cannot be expanded. Wiring: `App.output_pooler()` builds the hook (Settings switch `pool_overlapping_biomes`; `residual_fallback` follows the target build's `allow_fallback` support) and `App.action_save_config` / `action_quick_save` pass it to `yaml_io.save_songpack`.
+
 **"Global / default songs don't play where they should":** `scopes.find_blockers` (what blocks them), `simulation.build_plan` (`terminal_entry_id` = the entry that ends the fallback chain), and the `allowFallback` checkboxes (per case in `biome_case_editor.py`, per entry in `LibraryTab`).
 
 **"Audio playback/trimming misbehaves":** `audio_io.py` (pure logic) vs.
@@ -324,11 +338,12 @@ bundled `default_biome_colors.json`), don't conflate them.
   workarounds — documented inline.
 - `case_grouping.py` groupings are *recomputed live*, never cached/stored —
   if you're looking for where a "case" is persisted, it isn't; it's derived.
-- The song-first list has one row per **primary** song (`songs[0]`). The other
-  members of a YAML song pool have no row of their own: the row label lists the
-  whole pool, search matches every pool member, and `case_grouping.
-  cases_containing_song` finds every entry a song plays in. (Giving pool members
-  their own rows needs row ids that are not entry ids; not done yet.)
+- The song-first list has one row per **primary** song (`songs[0]`), and since pools
+  are expanded on load and after the OR split, that is one row per song. A row only
+  names several songs when an edit path put a second song on an in-memory `Entry`
+  (see the gap noted under *Logical entries*); then the label lists the pool,
+  search matches every member and `case_grouping.cases_containing_song` finds every
+  entry a song plays in. Those helpers are the safety net, not the normal path.
 - Entries with **no `BIOME=`** and cross-category items are normal: a
   `custom_raw_conditions` string is *not* opaque, it is parsed on demand by
   `conditions.py`.
@@ -361,11 +376,14 @@ bundled `default_biome_colors.json`), don't conflate them.
 - Biome/dimension/block "combine" mode (OR vs AND) is a real per-category,
   per-entry setting (`entry.fixed_combine`, `biome_combine`, etc.), not just
   a display option — see `condition_logic.build_events`.
+- `UNDERWATER` is now `CATEGORY_UNDERWATER`, separate from `CATEGORY_HEIGHT`. The simulator's `_SLIDER_CATEGORIES` tuple must include both to avoid `UNDERWATER` appearing as a checkbox in the "More conditions" panel (it has its own dedicated switch in the slider row). If you add a new fixed category, check whether the simulator already surfaces it via a dedicated control and exclude it from `_SLIDER_CATEGORIES` accordingly.
+- `priority.score_entry()` no longer references `BIOME_NAME_WEIGHT`, `BIOME_TAG_WEIGHT`, `BLOCK_BASE_WEIGHT`, or `BLOCK_COUNT_LOG_BASE` — those constants were removed. If you see a `NameError` for them in old code, update to `BIOME_GROUP_WEIGHT`, `DIMENSION_GROUP_WEIGHT`, `BLOCK_GROUP_WEIGHT`. The old `atom_weight()` and `clause_score()` helpers in `priority.py` were also removed; call `priority.group_weight(priority.atom_group(atom))` instead.
 - Theming is two layers applied in a fixed order by `App.apply_theme`:
   `app_settings.apply_ttk_theme` (CTk→ttk bridge; may switch the ttk theme to
   `clam`, which resets ttk styles) and then `app_core._configure_ttk_typography`
   (fonts and `theme.tree_colors`). Reversing them loses the fonts/colours.
   `SettingsTab` still builds its colour list from plain `ttk` widgets.
+- `biome_pooling.py` output is a *compiled* form and must never become the editor's own model. Its entries carry `BIOME=` lists where the author wrote tags, so if `ReactiveMusic.yaml` were simply overwritten with them, the next load (including the session restore) would hand back the expanded entries and tag-level editing would be lost. **How it is kept safe:** `save_songpack(pooling=...)` writes the compiled `ReactiveMusic.yaml` and, only when pooling changed it, `songpack_source.yaml`. `load_songpack` uses that sidecar only while its hash matches the YAML's entries, so a hand-edited YAML wins and a stale sidecar is ignored (and deleted by the next save). `scopes.save` stays keyed by the authored entries (global/default entries are never pooled, so both readings agree). `ui_enhancements.save_config` verifies both halves: the compiled YAML read with `use_source=False` against `pooling(pack.entries)`, and a normal reload against the editor's entries. **Partially-fixed gap:** the simulator still plans biome *identity* (entry ids, `#n` numbers, case focus, double-click playback) from the authored entries (`entry_pools.logical_view(pack.entries)`), since the `#n` numbers and focus feature rely on real entry ids, which generated pools do not have, and a tag subject cannot match `BIOME=` entries at all. But `simulator_tab.py::_compiled_reachable_songs` now separately recomputes `biome_pooling.pool_overlapping_biomes` for the hovered/pinned biome (biome subjects only, never tag subjects) and corrects each authored `PlanItem.reachable` flag to match it, so the "unreachable" dimming and the playlist's actual reachability agree with what the saved file will do, even though the row/`#n` an unreachable-turned-reachable song is attributed to is still the authored one. Remaining gap: `Plan.terminal_entry_id` (used for wrap-around at the end of a playlist) is still computed from the authored chain, not the corrected one, so looping right at the boundary of a corrected pool can still pick the authored terminal entry instead of the compiled one.
 - Custom biomes added in the UI get a colour but **no chart attributes**, so they
   never appear on the maps unless `biome_attributes` is added to
   `biome_customization.json` by hand (`biome_customization.load_attributes` reads

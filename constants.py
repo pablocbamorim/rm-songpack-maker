@@ -24,6 +24,7 @@ CATEGORY_SPECIAL = "special"
 CATEGORY_TIME = "time"
 CATEGORY_WEATHER = "weather"
 CATEGORY_HEIGHT = "height"
+CATEGORY_UNDERWATER = "underwater"
 CATEGORY_ENTITIES = "entities"
 CATEGORY_ACTIONS = "actions"
 CATEGORY_LOCATION = "location"
@@ -44,7 +45,11 @@ FIXED_CATEGORIES = {
     },
     CATEGORY_HEIGHT: {
         "label": "World Height",
-        "options": ["UNDERWATER", "UNDERGROUND", "DEEP_UNDERGROUND", "HIGH_UP"],
+        "options": ["UNDERGROUND", "DEEP_UNDERGROUND", "HIGH_UP"],
+    },
+    CATEGORY_UNDERWATER: {
+        "label": "Underwater",
+        "options": ["UNDERWATER"],
     },
     CATEGORY_ENTITIES: {
         "label": "Entities",
@@ -70,6 +75,7 @@ FIXED_CATEGORY_ORDER = [
     CATEGORY_TIME,
     CATEGORY_WEATHER,
     CATEGORY_HEIGHT,
+    CATEGORY_UNDERWATER,
     CATEGORY_ENTITIES,
     CATEGORY_ACTIONS,
     CATEGORY_LOCATION,
@@ -189,26 +195,58 @@ SCOPE_BY_LABEL = {v: k for k, v in SCOPE_LABELS.items()}
 # ---------------------------------------------------------------------------
 # Rarity / priority weights.
 #
-# The core idea (see priority.py for the full algorithm): every checked
-# condition makes an entry *rarer* (harder to satisfy) and should push it
-# *earlier* in the priority list, since the mod plays the first valid
-# entry it finds top-to-bottom. Checking many options inside one OR-group
-# makes that group easier to satisfy (less rare), so it should count for
-# less. These numbers are starting points, not physics -- tweak freely.
+# priority.score_entry() adds one flat weight per DISTINCT condition GROUP
+# an entry touches (time, biome, height, underwater, weather, dimension,
+# block, or "everything else"), once each -- no matter how many options
+# inside that group are checked, and no matter whether they are combined
+# with OR or AND.
+#
+# This used to divide a group's weight by how many options were OR'd
+# together in it, on the theory that an easy-to-satisfy OR group is less
+# rare. In practice that meant a song deliberately given a wide OR pool
+# ("play in biome X or Y") could score LOWER than a second, unrelated song
+# that is exclusive to biome X alone -- so the exclusive song always won
+# the tie in biome X, and the pooled song's own turn there was never
+# reached (the mod plays the first valid entry it finds top-to-bottom, and
+# nothing below an entry with allowFallback off ever gets a look-in).
+# Scoring by which groups are touched, not how many options are inside
+# them, removes that trap: "biome X or Y" and "biome X only" now score
+# identically, so they tie in priority instead of the OR'd one silently
+# losing, and only entries that genuinely touch MORE groups (e.g. "biome X
+# AND night") outrank a plainer one.
+#
+# Tying in score still doesn't make two entries SHARE a biome's rotation
+# by itself -- the mod still only ever plays the first valid entry it
+# finds, so a tie just changes which one of the two wins first (whichever
+# was added to the editor first; see priority.auto_priority_order). For
+# entries that should genuinely share a pool, use case_splitting.py's
+# "Split OR conditions into cases" tool: it turns OR'd groups into
+# separate AND-only cases and merges any that land on the exact same
+# conditions across the WHOLE pack into one shared song pool, so two songs
+# that both want "just biome X" end up in the same entry instead of one
+# blocking the other.
+#
+# These numbers are starting points, not physics -- tweak freely.
 # ---------------------------------------------------------------------------
 CATEGORY_WEIGHTS = {
-    CATEGORY_SPECIAL: 4.0,
-    CATEGORY_TIME: 2.0,
-    CATEGORY_WEATHER: 2.0,
+    CATEGORY_SPECIAL: 5.0,
+    CATEGORY_TIME: 1.0,
+    CATEGORY_WEATHER: 3.0,
     CATEGORY_HEIGHT: 3.0,
-    CATEGORY_ENTITIES: 2.0,
-    CATEGORY_ACTIONS: 3.0,
-    CATEGORY_LOCATION: 3.0,
-    CATEGORY_COMBAT: 6.0,
+    CATEGORY_UNDERWATER: 3.0,
+    CATEGORY_ENTITIES: 5.0,
+    CATEGORY_ACTIONS: 5.0,
+    CATEGORY_LOCATION: 5.0,
+    CATEGORY_COMBAT: 5.0,
 }
 
-BIOME_NAME_WEIGHT = 5.0   # a specific named biome is fairly rare
-BIOME_TAG_WEIGHT = 3.0    # a tag matches a whole family of biomes -> broader
-DIMENSION_WEIGHT = 3.0
-BLOCK_BASE_WEIGHT = 8.0   # nearby-block requirements are very specific
-BLOCK_COUNT_LOG_BASE = 2  # higher required counts add a bit more rarity
+#: BIOME= and BIOMETAG= both count as the same "biome" group: a tag isn't
+#: scored as broader/rarer than an exact name any more, only "a biome
+#: condition was used at all" counts.
+BIOME_GROUP_WEIGHT = 1.0
+DIMENSION_GROUP_WEIGHT = 5.0
+BLOCK_GROUP_WEIGHT = 5.0
+#: Weight for any group not listed above (an unrecognised / verbatim token
+#: conditions.py could not classify) -- still probably a real constraint,
+#: so it is not scored as free.
+DEFAULT_GROUP_WEIGHT = 5.0

@@ -54,9 +54,11 @@ import audio_preview
 import biome_case_editor
 import biome_chart
 import biome_customization
+import biome_pooling
 import case_grouping
 import constants as C
 import entry_pools
+import mod_versions
 import simulation
 import theme
 import biome_tag_platforms
@@ -77,7 +79,8 @@ _HEIGHT_OPTIONS = [("DEEP_UNDERGROUND", "DEEP UNDRG"), ("UNDERGROUND", "UNDERG")
                    (None, "NONE"), ("HIGH_UP", "HIGH UP")]
 
 # Categories already covered by the sliders / switch at the top.
-_SLIDER_CATEGORIES = (C.CATEGORY_TIME, C.CATEGORY_WEATHER, C.CATEGORY_HEIGHT)
+_SLIDER_CATEGORIES = (C.CATEGORY_TIME, C.CATEGORY_WEATHER,
+                      C.CATEGORY_HEIGHT, C.CATEGORY_UNDERWATER)
 
 #: Marks a subject as a biome tag ("#IS_HOT"), as opposed to a biome ("desert").
 #: Never occurs at the start of a biome id, so the two can share one cache/state.
@@ -644,6 +647,46 @@ class SimulatorTab(ctk.CTkFrame):
             tag, self.app.biome_custom_tag_members)
         return {self._dimension_of(b) for b in members} or {"minecraft:overworld"}
 
+    def _compiled_reachable_songs(self, biome: str, flags, manual) -> Optional[Set[str]]:
+        """Which songs actually reach the mod for `biome`, per the file the
+        songpack will be SAVED as -- or None when biome pooling is off.
+
+        `_plan_for` below plans from the AUTHORED entries
+        (`entry_pools.logical_view(self.app.pack.entries)`), because that is
+        what keeps entry ids, "#n" numbers, case focus and double-click
+        playback all pointing at real entries in the pack. But when two
+        overlapping BIOMETAG=/BIOME= entries share a biome, App.output_pooler()
+        (Settings: "pool the songs of entries that overlap on the same
+        biomes") compiles them at save time into ONE shared per-biome entry
+        (see biome_pooling.py) -- and the mod only ever reads that compiled
+        file. Planning from the authored entries alone therefore
+        under-reports reachability: whichever authored entry happens to be
+        valid first "wins" and blocks the others, even though their songs
+        would genuinely share one rotation once saved.
+
+        This recomputes the same transform save uses (without touching
+        App.last_pooling_report, which is save-time-only bookkeeping) and
+        returns the set of songs that are reachable in ITS plan, so
+        `_plan_for` can correct just the `reachable` flag of the authored
+        plan's items -- their entry ids/positions/etc. stay the authored
+        ones. Tag subjects never call this: a tag subject has no single
+        biome for BIOME= entries to match, so pooling doesn't apply to it.
+        """
+        if not self.app.settings.get("pool_overlapping_biomes", True):
+            return None
+        fallback_ok = mod_versions.supports(
+            self.app.effective_mod_version(), "allow_fallback")
+        biomes = list(biome_customization.load_app_dimensions())
+        result = biome_pooling.pool_overlapping_biomes(
+            self.app.pack.entries, biomes=biomes, tags_of=simulation.biome_tags,
+            residual_fallback=fallback_ok)
+        compiled_view = entry_pools.logical_view(result.entries)
+        state = simulation.make_state(
+            biome, self._dimension_of(biome), flags, manual)
+        compiled_plan = simulation.build_plan(
+            compiled_view.entries, state, compiled_view.positions)
+        return {item.song for item in compiled_plan.items if item.reachable}
+
     def _plan_for(self, subject: str) -> simulation.Plan:
         """The plan for a subject: a biome name, or "#tag" for a biome tag."""
         plan = self._plan_cache.get(subject)
@@ -658,6 +701,12 @@ class SimulatorTab(ctk.CTkFrame):
                     subject, self._dimension_of(subject), flags, manual)
             view = self._view()
             plan = simulation.build_plan(view.entries, state, view.positions)
+            if not self._is_tag_subject(subject):
+                compiled_reachable = self._compiled_reachable_songs(
+                    subject, flags, manual)
+                if compiled_reachable is not None:
+                    for item in plan.items:
+                        item.reachable = item.song in compiled_reachable
             self._plan_cache[subject] = plan
         return plan
 

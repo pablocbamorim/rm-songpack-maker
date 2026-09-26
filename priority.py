@@ -18,26 +18,44 @@ gives us are:
   * forceChance (only affects forceStop/forceStart transitions).
 
 So "rarest conditions first" is implemented as a specificity/rarity
-*score* per entry (more, narrower conditions => higher score => earlier
-in the list). "Don't loop the same rare song" is left to the user's
-explicit choice of allowFallback per entry: MAKING_SONGPACKS.md documents
-allowFallback as default FALSE, and the editor follows that (an older
-comment here claimed it defaulted to true; it does not, and nothing writes
-allowFallback: false on its own). An optional, explicit "variety mixing"
-helper (see `find_broader_fallbacks`) lets the user knowingly copy a broader
-entry's songs into a narrower entry's own song list, so the broader song has
-a direct, immediate chance to be picked instead of waiting for full
-exhaustion. Both are clearly surfaced in the UI rather than being a hidden
-guess about the mod's internal randomness.
+*score* per entry (more, rarer condition GROUPS touched => higher score
+=> earlier in the list). "Don't loop the same rare song" is left to the
+user's explicit choice of allowFallback per entry: MAKING_SONGPACKS.md
+documents allowFallback as default FALSE, and the editor follows that (an
+older comment here claimed it defaulted to true; it does not, and nothing
+writes allowFallback: false on its own). An optional, explicit "variety
+mixing" helper (see `find_broader_fallbacks`) lets the user knowingly copy a
+broader entry's songs into a narrower entry's own song list, so the broader
+song has a direct, immediate chance to be picked instead of waiting for
+full exhaustion. Both are clearly surfaced in the UI rather than being a
+hidden guess about the mod's internal randomness.
 
 Every entry is scored from its WHOLE parsed condition (see conditions.py), so
 cross-category / verbatim items such as "BIOME=ocean || UNDERWATER" count by
 what they actually require instead of a flat bonus.
+
+SCORING: DISTINCT GROUPS, NOT OPTION COUNT
+-------------------------------------------
+score_entry() adds one flat weight per distinct condition GROUP an entry
+touches (time, biome, height, underwater, weather, dimension, block, or
+"everything else" -- see constants.CATEGORY_WEIGHTS), once each, no matter
+how many options inside a group are checked or whether they are OR'd or
+AND'd together. See constants.py's own comment on CATEGORY_WEIGHTS for why
+this replaced the older "divide by how many options are OR'd together"
+approach (short version: it made a song deliberately pooled across two
+biomes score LOWER than an unrelated, single-biome-exclusive song, so the
+exclusive song always won the tie and the pooled song's own turn in that
+biome was never reached).
+
+Scoring by group does not, on its own, make two same-scored entries SHARE
+a biome's rotation -- the mod still only plays the first valid entry it
+finds, so a tie is still won outright by just one of them (whichever the
+user added to the editor first). For entries that should genuinely share a
+pool, see case_splitting.py.
 """
 
 from __future__ import annotations
 
-import math
 from typing import List
 
 import condition_logic
@@ -46,83 +64,52 @@ import constants as C
 import entry_pools
 from models import Entry, Songpack
 
+#: Group keys (other than a FIXED category name) that get their own weight
+#: instead of C.DEFAULT_GROUP_WEIGHT.
+_GROUP_WEIGHT_OVERRIDES = {
+    "biome": C.BIOME_GROUP_WEIGHT,
+    "dimension": C.DIMENSION_GROUP_WEIGHT,
+    "block": C.BLOCK_GROUP_WEIGHT,
+}
+
+
+def atom_group(atom: conditions.Atom) -> str:
+    """Which SCORING group this atom belongs to: a fixed-category key (see
+    constants.FIXED_CATEGORY_ORDER), or "biome" (BIOME=/BIOMETAG= alike,
+    scored the same -- see constants.py), "dimension", "block", or
+    "unknown" for anything conditions.py couldn't classify at all (still
+    probably a real, hand-written constraint, so it still counts).
+    """
+    if atom.kind == conditions.KIND_FIXED:
+        return C.TOKEN_TO_CATEGORY.get(atom.value, "unknown")
+    if atom.kind in (conditions.KIND_BIOME, conditions.KIND_BIOMETAG):
+        return "biome"
+    if atom.kind == conditions.KIND_DIM:
+        return "dimension"
+    if atom.kind == conditions.KIND_BLOCK:
+        return "block"
+    return "unknown"
+
+
+def group_weight(group: str) -> float:
+    """Rarity weight of one scoring group (see atom_group) -- the SAME
+    weight whether the group came from a structured widget or a verbatim /
+    cross-category condition, so e.g. "BIOME=ocean || UNDERWATER" scores
+    exactly as if BIOME and UNDERWATER had been ticked in the widgets.
+    """
+    if group in C.CATEGORY_WEIGHTS:
+        return C.CATEGORY_WEIGHTS[group]
+    return _GROUP_WEIGHT_OVERRIDES.get(group, C.DEFAULT_GROUP_WEIGHT)
+
 
 def score_entry(entry: Entry) -> float:
-    """Higher score = rarer / more specific = should play earlier."""
-    score = 0.0
-
-    for cat in C.FIXED_CATEGORY_ORDER:
-        chosen = entry.selected.get(cat, set())
-        n = len(chosen)
-        if n == 0:
-            continue
-        weight = C.CATEGORY_WEIGHTS.get(cat, 2.0)
-        # An OR group with many options checked is easier to satisfy, so
-        # it contributes less rarity than a single, narrow selection.
-        score += weight / n
-
-    if entry.biomes:
-        base = sum(
-            C.BIOME_TAG_WEIGHT if b.is_tag else C.BIOME_NAME_WEIGHT
-            for b in entry.biomes
-        ) / len(entry.biomes)
-        if entry.biome_combine == C.COMBINE_OR:
-            score += base / \
-                len(entry.biomes) if len(entry.biomes) > 1 else base
-        else:
-            score += base * len(entry.biomes)
-
-    if entry.dimensions:
-        n = len(entry.dimensions)
-        if entry.dimension_combine == C.COMBINE_OR:
-            score += C.DIMENSION_WEIGHT / n if n > 1 else C.DIMENSION_WEIGHT
-        else:
-            score += C.DIMENSION_WEIGHT * n
-
-    if entry.blocks:
-        block_score = 0.0
-        for b in entry.blocks:
-            block_score += C.BLOCK_BASE_WEIGHT + \
-                math.log(max(b.min_count, 1) + 1, C.BLOCK_COUNT_LOG_BASE)
-        if entry.block_combine == C.COMBINE_OR and len(entry.blocks) > 1:
-            block_score /= len(entry.blocks)
-        score += block_score
-
-    # Verbatim items (cross-category ORs, several OR groups in one category,
-    # unrecognised tokens) are scored from what they actually contain.
-    for item in entry.custom_raw_conditions:
-        score += clause_score(conditions.parse_item(item))
-
-    return round(score, 3)
-
-
-def atom_weight(atom: conditions.Atom) -> float:
-    """Rarity weight of one condition (same weights as the structured part)."""
-    if atom.kind == conditions.KIND_FIXED:
-        cat = C.TOKEN_TO_CATEGORY.get(atom.value)
-        return C.CATEGORY_WEIGHTS.get(cat, 2.0)
-    if atom.kind == conditions.KIND_BIOME:
-        return C.BIOME_NAME_WEIGHT
-    if atom.kind == conditions.KIND_BIOMETAG:
-        return C.BIOME_TAG_WEIGHT
-    if atom.kind == conditions.KIND_DIM:
-        return C.DIMENSION_WEIGHT
-    if atom.kind == conditions.KIND_BLOCK:
-        return C.BLOCK_BASE_WEIGHT + math.log(
-            max(atom.count, 1) + 1, C.BLOCK_COUNT_LOG_BASE)
-    return 1.5          # unrecognised token: still probably a real constraint
-
-
-def clause_score(clause: conditions.Clause) -> float:
-    """Rarity of one OR-group: the average weight of its options, divided by
-    how many there are (an OR of n options is n times easier to satisfy).
-    For n options of one fixed category this is exactly weight / n, the same
-    rule the structured checkboxes use.
+    """Higher score = touches more, rarer condition GROUPS = should play
+    earlier. Counts each DISTINCT group at most once, regardless of how
+    many options within it are selected or whether they are OR'd or AND'd
+    -- see constants.py's CATEGORY_WEIGHTS comment for why.
     """
-    if not clause:
-        return 0.0
-    weights = [atom_weight(a) for a in clause]
-    return (sum(weights) / len(weights)) / len(weights)
+    groups = {atom_group(a) for a in condition_logic.entry_atoms(entry)}
+    return round(sum(group_weight(g) for g in groups), 3)
 
 
 def scope_rank(entry: Entry) -> int:

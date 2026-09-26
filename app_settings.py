@@ -37,6 +37,11 @@ DEFAULTS = {
     # Show compatibility biome tags whose bundled membership list is empty.
     # Most songpacks do not need these, so keep the map focused by default.
     "show_empty_biome_tags": False,
+    # When saving, songs of entries that overlap on the same biomes (e.g. two
+    # BIOMETAG entries sharing plains) are pooled into per-biome entries so every
+    # song can play there (biome_pooling.py). The editor keeps its own entries in
+    # songpack_source.yaml either way.
+    "pool_overlapping_biomes": True,
 }
 
 

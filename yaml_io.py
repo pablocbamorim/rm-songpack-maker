@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
-from typing import Dict, List, Optional, Tuple
+import tempfile
+from typing import Callable, Dict, List, Optional, Tuple
 
 import yaml
 
@@ -12,6 +15,15 @@ from models import Songpack, Entry
 from condition_logic import build_events, parse_events
 
 DEFAULT_ENTRIES_ROOT_KEY = "entries"
+
+#: Editor-only sidecar next to ReactiveMusic.yaml. Written only when a save-time
+#: transform (biome_pooling) made the YAML differ from what the author edited: it
+#: holds the AUTHORED entries plus a hash of the entries that were written, so the
+#: next load can give the editor back its own model. See _authored_entries().
+SOURCE_FILENAME = "songpack_source.yaml"
+
+#: Hook type for "the entries as they should be written" (biome_pooling).
+Pooling = Callable[[List[Entry]], List[Entry]]
 
 #: Keys this editor edits with widgets. Every other key of an entry / of the
 #: file is preserved verbatim (Entry.extra_fields / Songpack.extra_top_level).
@@ -30,6 +42,7 @@ class SongpackFormatError(ValueError):
     """The file is not a songpack this editor can load without changing its
     meaning. The message lists what is wrong and where, for a dialog box.
     """
+
 
 AUDIO_EXTENSIONS = (".mp3", ".ogg", ".wav")
 
@@ -122,7 +135,8 @@ def _describe(value) -> str:
 def _str_list(raw: dict, key: str, where: str, problems: List[str]) -> List[str]:
     value = raw.get(key)
     if not isinstance(value, list):
-        problems.append(f"{where}: '{key}' must be a list, got {_describe(value)}.")
+        problems.append(
+            f"{where}: '{key}' must be a list, got {_describe(value)}.")
         return []
     out = []
     for index, item in enumerate(value, start=1):
@@ -198,11 +212,15 @@ def _parse_entry(raw, position: int, problems: List[str]) -> Entry:
     return entry
 
 
-def load_songpack(path: str) -> Songpack:
+def load_songpack(path: str, use_source: bool = True) -> Songpack:
     """Read a songpack. Raises SongpackFormatError (a ValueError) with every
     problem found instead of guessing: a malformed entry, a wrongly typed
     flag or a scalar where a list belongs is reported, never coerced or
     silently dropped.
+
+    With ``use_source`` (the default) the entries come from songpack_source.yaml
+    when it belongs to this exact YAML (see _authored_entries); pass False to read
+    the file ReactiveMusic itself reads, e.g. to verify what a save wrote.
     """
     if os.path.isdir(path):
         candidate = os.path.join(path, "ReactiveMusic.yaml")
@@ -246,6 +264,9 @@ def load_songpack(path: str) -> Songpack:
     else:
         raise SongpackFormatError("Unrecognised ReactiveMusic.yaml structure.")
 
+    if use_source and isinstance(raw_entries, list):
+        raw_entries = _authored_entries(path, raw_entries)
+
     for position, raw in enumerate(raw_entries, start=1):
         if not _entry_looks_like_entry(raw):
             problems.append(
@@ -264,6 +285,14 @@ def load_songpack(path: str) -> Songpack:
     # Editor-only global/default markers live next to the YAML (scopes.py).
     scopes.apply_to_entries(
         pack.entries, scopes.load(os.path.dirname(os.path.abspath(path))))
+
+    # The editor is one Entry per song (one row per song in Music &
+    # Conditions), while the file may hold song POOLS. Expand them now -- AFTER
+    # the scope sidecar was applied, because it is keyed by the pooled songs --
+    # so every consumer sees the same model. Adjacent entries with identical
+    # rules are merged back into a pool by save_songpack, so a load -> save
+    # round trip writes the same file.
+    pack.entries = entry_pools.expand_song_pools(pack.entries)
 
     return pack
 
@@ -315,12 +344,53 @@ def _entry_to_dict(entry: Entry, songs: Optional[List[str]] = None) -> dict:
     return d
 
 
-def songpack_to_dict(pack: Songpack, merge_equivalent: bool = True) -> dict:
+def _entries_digest(entry_dicts) -> str:
+    """SHA-256 of an entries list as it appears in the YAML. Computed the same
+    way from the dicts about to be written and from the list read back, so it
+    identifies the file's entries independently of formatting.
+    """
+    try:
+        text = json.dumps(entry_dicts, sort_keys=True, default=str)
+    except TypeError:                       # e.g. unsortable extra-field keys
+        text = repr(entry_dicts)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _authored_entries(yaml_path: str, compiled_entries: list) -> list:
+    """The entries the AUTHOR edited, when the sidecar belongs to this YAML.
+
+    A save-time transform (biome_pooling) writes entries the editor never
+    modelled (BIOME= lists instead of the tags the author picked). Reading them
+    back would lose the author's structure, so the authored entries are kept in
+    SOURCE_FILENAME together with a hash of what was written. If the hash no
+    longer matches -- the YAML was edited by hand, or the sidecar is stale --
+    the YAML wins and the sidecar is ignored.
+    """
+    source = os.path.join(os.path.dirname(os.path.abspath(yaml_path)),
+                          SOURCE_FILENAME)
+    try:
+        with open(source, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+    except (OSError, yaml.YAMLError):
+        return compiled_entries
+    if (isinstance(data, dict) and isinstance(data.get("entries"), list)
+            and data.get("compiledSha256") == _entries_digest(compiled_entries)):
+        return data["entries"]
+    return compiled_entries
+
+
+def songpack_to_dict(pack: Songpack, merge_equivalent: bool = True,
+                     pooling: Optional[Pooling] = None) -> dict:
+    """The YAML data. `pooling`, when given, maps the editor's entries to the
+    entries to WRITE (biome_pooling.pool_overlapping_biomes); without it the
+    file is exactly what the editor holds, as before.
+    """
+    entries = pooling(pack.entries) if pooling is not None else pack.entries
     if merge_equivalent:
         entry_dicts = [_entry_to_dict(e, songs)
-                       for e, songs in merge_equivalent_entries(pack.entries)]
+                       for e, songs in merge_equivalent_entries(entries)]
     else:
-        entry_dicts = [_entry_to_dict(e) for e in pack.entries]
+        entry_dicts = [_entry_to_dict(e) for e in entries]
 
     def q(value) -> _Quoted:
         return _Quoted("" if value is None else str(value))
@@ -342,22 +412,64 @@ def songpack_to_dict(pack: Songpack, merge_equivalent: bool = True) -> dict:
     return data
 
 
-def expected_songs_after_save(pack: Songpack) -> List[str]:
+def expected_songs_after_save(pack: Songpack,
+                              pooling: Optional[Pooling] = None) -> List[str]:
     """Flat song list a saved-and-reloaded file should contain (used by the
     save verification step)."""
-    return [s for _e, songs in merge_equivalent_entries(pack.entries)
+    entries = pooling(pack.entries) if pooling is not None else pack.entries
+    return [s for _e, songs in merge_equivalent_entries(entries)
             for s in songs]
 
 
-def save_songpack(pack: Songpack, folder: str, copy_music_from: Optional[str] = None) -> str:
+def _write_source_sidecar(pack: Songpack, folder: str,
+                          compiled: dict) -> None:
+    """Keep the authored entries next to a YAML that pooling rewrote, or remove
+    a stale sidecar when the YAML is exactly what the editor holds.
+    """
+    root = pack.entries_root_key or DEFAULT_ENTRIES_ROOT_KEY
+    target = os.path.join(folder, SOURCE_FILENAME)
+    authored = songpack_to_dict(pack)[root]
+    written = compiled[root]
+    if _entries_digest(authored) == _entries_digest(written):
+        try:
+            os.unlink(target)
+        except OSError:
+            pass
+        return
+    fd, tmp = tempfile.mkstemp(prefix=".songpack_source_", suffix=".tmp",
+                               dir=folder)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write("# Editor-only: the entries as you edited them. ReactiveMusic\n"
+                    "# reads ReactiveMusic.yaml, which biome pooling rewrote; this file\n"
+                    "# is used only while compiledSha256 still matches that YAML.\n")
+            yaml.dump({"compiledSha256": _entries_digest(written),
+                       "entries": authored}, f, Dumper=_SongpackDumper,
+                      sort_keys=False, allow_unicode=True,
+                      default_flow_style=False, width=10000)
+        os.replace(tmp, target)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def save_songpack(pack: Songpack, folder: str,
+                  copy_music_from: Optional[str] = None,
+                  pooling: Optional[Pooling] = None) -> str:
     os.makedirs(folder, exist_ok=True)
     yaml_path = os.path.join(folder, "ReactiveMusic.yaml")
 
-    data = songpack_to_dict(pack)
+    data = songpack_to_dict(pack, pooling=pooling)
     with open(yaml_path, "w", encoding="utf-8") as f:
         yaml.dump(data, f, Dumper=_SongpackDumper, sort_keys=False,
                   allow_unicode=True, default_flow_style=False, width=10000)
+    _write_source_sidecar(pack, folder, data)
 
+    # Scopes are keyed by the AUTHORED entries (global/default entries carry no
+    # biome, so pooling leaves them untouched and both readings agree).
     scopes.save(folder, merge_equivalent_entries(pack.entries))
 
     if copy_music_from:

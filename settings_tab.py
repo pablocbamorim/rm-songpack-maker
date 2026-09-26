@@ -68,6 +68,15 @@ class SettingsTab(ctk.CTkFrame):
             command=self._on_show_empty_tags_toggled,
         ).pack(anchor="w", padx=12, pady=4)
 
+        self.pool_overlaps_var = tk.BooleanVar(
+            value=bool(app.settings.get("pool_overlapping_biomes", True)))
+        ctk.CTkSwitch(
+            prefs,
+            text="When saving, pool the songs of entries that overlap on the same biomes",
+            variable=self.pool_overlaps_var,
+            command=self._on_pool_overlaps_toggled,
+        ).pack(anchor="w", padx=12, pady=4)
+
         ctk.CTkLabel(
             prefs,
             text=("Saved to your user profile, so they apply to every songpack and every "
@@ -330,6 +339,15 @@ class SettingsTab(ctk.CTkFrame):
         self.app.set_status(
             "Empty biome tags turned %s on the tag map." %
             ("on" if self.show_empty_tags_var.get() else "off"))
+
+    def _on_pool_overlaps_toggled(self):
+        self.app.settings["pool_overlapping_biomes"] = bool(
+            self.pool_overlaps_var.get())
+        self.app.save_settings()
+        self.app.set_status(
+            "Biome pooling on save turned %s. It takes effect the next time "
+            "you save." %
+            ("on" if self.pool_overlaps_var.get() else "off"))
 
     # -- biome colour list -------------------------------------------------
     def _store(self, is_tag: bool) -> dict:
